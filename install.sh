@@ -25,6 +25,22 @@ echo -e "${CYAN}============================================${NC}"
 echo ""
 
 # ============================================
+# UNINSTALL DULU — Hapus semua bekas instalasi
+# ============================================
+echo ""
+echo -e "${YELLOW}---[0/7] Uninstall Previous Installation ---${NC}"
+
+if [ -f "$SCRIPT_DIR/uninstall.sh" ]; then
+    chmod +x "$SCRIPT_DIR/uninstall.sh"
+    cd "$SCRIPT_DIR"
+    ./uninstall.sh
+    echo ""
+    log_ok "Uninstall selesai. Melanjutkan install fresh..."
+else
+    log_info "uninstall.sh tidak ditemukan, melanjutkan..."
+fi
+
+# ============================================
 # GIT PULL — Update kode terbaru
 # ============================================
 if [ -d "$SCRIPT_DIR/.git" ]; then
@@ -41,15 +57,6 @@ fi
 # ============================================
 USE_DOCKER=false
 if command -v docker &>/dev/null && docker ps &>/dev/null 2>&1; then
-    # Cek apakah container lama masih ada
-    OLD_CONTAINER=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "owrt-musicbox|openwrt-music-box" | head -1)
-    if [ -n "$OLD_CONTAINER" ]; then
-        log_info "Container Docker ditemukan: $OLD_CONTAINER"
-        log_info "Menghentikan container lama..."
-        docker-compose down 2>/dev/null || docker stop "$OLD_CONTAINER" 2>/dev/null || true
-        docker rm "$OLD_CONTAINER" 2>/dev/null || true
-        log_ok "Container lama dihapus"
-    fi
     USE_DOCKER=true
 fi
 
