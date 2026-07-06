@@ -51,7 +51,7 @@ app_state = {
     "volume": 50, "status_output": "jack", "active_preset": "Normal",
     "thumb": "", "queue": [], "current_index": -1, "sleep_target": 0,
     "connected_bt_mac": "", "connected_bt_name": "", "last_play_time": 0,
-    "error_count": 0, "manual_stop": False, "play_mode": "server"  # server or browser
+    "error_count": 0, "manual_stop": False, "play_mode": "server"
 }
 
 af_state = {"eq": "", "balance": "", "crossfeed": ""}
@@ -66,6 +66,14 @@ EQ_PRESETS = {
     "Metal":  {"f1":6,"f2":5,"f3":0,"f4":-2,"f5":-3,"f6":0,"f7":3,"f8":6,"f9":7,"f10":7},
     "Classic":{"f1":4,"f2":3,"f3":2,"f4":2,"f5":-1,"f6":-1,"f7":0,"f8":2,"f9":3,"f10":4},
 }
+
+def update_mpv_filters():
+    filters = []
+    if af_state["eq"]: filters.append(af_state["eq"])
+    if af_state["balance"]: filters.append(af_state["balance"])
+    if af_state["crossfeed"]: filters.append(af_state["crossfeed"])
+    cmd = ",".join(filters) if filters else ""
+    mpv_send(["set_property", "af", cmd])
 
 def mpv_send(cmd):
     if not os.path.exists(MPV_SOCKET): return None
@@ -142,16 +150,122 @@ def play_next():
                 threading.Thread(target=trigger_server_play, args=(s['link'],)).start()
         else: app_state["status"] = "stopped"
 
-# ---- Routes ----
+# === METADATA WORKER (CRITICAL untuk audio) ===
+def metadata_worker():
+    global needs_restore
+    last_path = ""
+    idle_counter = 0
+    if not os.path.exists(COVER_DIR): os.makedirs(COVER_DIR, exist_ok=True)
+    while True:
+        try:
+            bt_mac, bt_name = get_connected_bt()
+            with state_lock:
+                app_state["connected_bt_mac"] = bt_mac or ""
+                app_state["connected_bt_name"] = bt_name or ""
+            # Sleep timer
+            with state_lock:
+                target = app_state["sleep_target"]
+                if target > 0 and time.time() >= target:
+                    app_state["sleep_target"] = 0
+                    app_state["queue"] = []
+                    app_state["current_index"] = -1
+                    threading.Thread(target=mpv_send, args=(["stop"],)).start()
+            mpv_ready = False
+            try:
+                if mpv_send(["get_property", "idle-active"]) is not None: mpv_ready = True
+            except: pass
+            if mpv_ready:
+                idle_counter = 0
+                path = mpv_send(["get_property", "path"])
+                if path and (path != last_path or needs_restore):
+                    last_path = path
+                    needs_restore = False
+                    time.sleep(0.8)  # Beri waktu MPV settle
+                    with state_lock: saved_vol = app_state["volume"]
+                    mpv_send(["set_property", "volume", saved_vol])
+                    update_mpv_filters()
+                is_eof = mpv_send(["get_property", "eof-reached"])
+                is_idle = mpv_send(["get_property", "idle-active"])
+                with state_lock:
+                    cm = app_state.get("manual_stop", False)
+                    cs = app_state.get("status", "stopped")
+                if cm and is_idle:
+                    with state_lock: app_state["manual_stop"] = False
+                elif is_eof is True or (is_idle is True and cs == "playing"):
+                    play_next(); time.sleep(1); continue
+                # Metadata
+                queue_title = "Unknown Title"
+                with state_lock:
+                    if app_state["queue"] and app_state["current_index"] < len(app_state["queue"]):
+                        queue_title = app_state["queue"][app_state["current_index"]].get('title', 'Unknown Title')
+                meta = mpv_send(["get_property", "metadata"]) or {}
+                mpv_title = mpv_send(["get_property", "media-title"])
+                final_title = queue_title
+                if mpv_title:
+                    junk = any(x in mpv_title.lower() for x in ["http","www.",".com","webm&","googlevideo","?source"])
+                    if not junk: final_title = mpv_title
+                # Extract artist from title if not in metadata
+                artist = ""
+                for k in ["artist","performer","composer"]:
+                    for dk, dv in meta.items():
+                        if dk.lower() == k.lower(): artist = dv; break
+                    if artist: break
+                if not artist or artist.lower() == "unknown artist":
+                    if " - " in (queue_title if " - " in queue_title else final_title):
+                        parts = (queue_title if " - " in queue_title else final_title).split(" - ", 1)
+                        artist = parts[0].strip()
+                        final_title = parts[1].strip()
+                    else: artist = "Unknown Artist"
+                album = ""
+                for dk, dv in meta.items():
+                    if dk.lower() == "album": album = dv; break
+                # Tech info
+                codec = (mpv_send(["get_property","audio-codec-name"]) or "UNK").upper()
+                br = mpv_send(["get_property","audio-bitrate"])
+                br_str = f"{int(br)//1000}kbps" if br and int(br)>0 else ""
+                rate = mpv_send(["get_property","audio-params/samplerate"])
+                freq = f"{float(rate)/1000:g}kHz" if rate else ""
+                fmt = mpv_send(["get_property","audio-params/format"]) or ""
+                bit_depth = ""
+                if 's24' in fmt: bit_depth = "24bit"
+                elif 's32' in fmt or 'float' in fmt: bit_depth = "32bit"
+                elif 's16' in fmt: bit_depth = "16bit"
+                parts_list = [codec]
+                if br_str: parts_list.append(br_str)
+                if freq: parts_list.append(freq)
+                if bit_depth: parts_list.append(bit_depth)
+                tech = " • ".join(parts_list)
+                paused = mpv_send(["get_property","pause"])
+                status = "paused" if paused else "playing"
+                with state_lock:
+                    app_state.update({
+                        "title": final_title, "artist": artist, "album": album,
+                        "status": status, "tech_info": tech,
+                        "current_time": mpv_send(["get_property","time-pos"]) or 0,
+                        "total_time": mpv_send(["get_property","duration"]) or 0
+                    })
+                    vol = mpv_send(["get_property","volume"])
+                    if vol is not None: app_state["volume"] = vol
+            else:
+                idle_counter += 1
+                if idle_counter == 5:
+                    with state_lock: app_state["status"] = "stopped"
+                with state_lock: ist = app_state["status"]
+                if idle_counter == 15 and ist != "stopped": play_next()
+        except Exception as e:
+            logger.error(f"metadata_worker error: {e}")
+        time.sleep(1)
 
+threading.Thread(target=metadata_worker, daemon=True).start()
+
+# === ROUTES ===
 @app.route('/')
 def index(): return render_template('index.html')
 
 @app.route('/status')
 def status():
-    global app_state
     with state_lock:
-        r = {k: app_state[k] for k in app_state}
+        r = dict(app_state)
         t = r.get("sleep_target", 0)
         if t > 0:
             rem = int(t - time.time())
@@ -166,32 +280,21 @@ def stream_file():
     if not path or not os.path.exists(path): abort(404)
     range_header = request.headers.get('Range', None)
     file_size = os.path.getsize(path)
-    
     ext = os.path.splitext(path)[1].lower()
     mime_map = {'.mp3':'audio/mpeg','.flac':'audio/flac','.wav':'audio/wav','.m4a':'audio/mp4','.ogg':'audio/ogg','.opus':'audio/ogg','.wma':'audio/x-ms-wma','.aac':'audio/aac'}
     mime = mime_map.get(ext, 'audio/mpeg')
-    
     if range_header:
-        byte1, byte2 = 0, None
         m = re.search(r'(\d+)-(\d*)', range_header)
-        g = m.groups()
-        byte1 = int(g[0])
-        if g[1]: byte2 = int(g[1])
-        if not byte2: byte2 = file_size - 1
-        length = byte2 - byte1 + 1
-        with open(path, 'rb') as f:
-            f.seek(byte1)
-            data = f.read(length)
-        resp = Response(data, 206, mimetype=mime,
-            content_type=mime, direct_passthrough=True)
-        resp.headers.add('Content-Range', f'bytes {byte1}-{byte2}/{file_size}')
-        resp.headers.add('Accept-Ranges', 'bytes')
-        resp.headers.add('Content-Length', str(length))
-        return resp
-    else:
-        resp = send_file(path, mimetype=mime)
-        resp.headers.add('Accept-Ranges', 'bytes')
-        return resp
+        if m:
+            byte1 = int(m.group(1)); byte2 = int(m.group(2)) if m.group(2) else file_size-1
+            length = byte2 - byte1 + 1
+            with open(path, 'rb') as f: f.seek(byte1); data = f.read(length)
+            resp = Response(data, 206, mimetype=mime, content_type=mime, direct_passthrough=True)
+            resp.headers.add('Content-Range', f'bytes {byte1}-{byte2}/{file_size}')
+            resp.headers.add('Accept-Ranges', 'bytes')
+            resp.headers.add('Content-Length', str(length))
+            return resp
+    return send_file(path, mimetype=mime)
 
 @app.route('/get_lyrics')
 def get_lyrics():
@@ -248,10 +351,7 @@ def bt_connect():
         if "Connected: yes" in info:
             m = re.search(r"Name:\s+(.*)", info)
             name = m.group(1) if m else "Bluetooth Device"
-            with state_lock:
-                app_state["connected_bt_mac"] = mac
-                app_state["connected_bt_name"] = name
-                app_state["status_output"] = "bluetooth"
+            with state_lock: app_state["connected_bt_mac"] = mac; app_state["connected_bt_name"] = name; app_state["status_output"] = "bluetooth"
             return jsonify({"status":"ok","name":name})
         return jsonify({"status":"failed"})
     except: return jsonify({"status":"error"})
@@ -273,7 +373,7 @@ def control(action):
     elif action == "next": play_next()
     elif action == "prev":
         with state_lock:
-            if app_state["current_index"]>0: app_state["current_index"]-=1; p=app_state["queue"][app_state["current_index"]]; trigger_server_play(p['link'])
+            if app_state["current_index"]>0: app_state["current_index"]-=1; trigger_server_play(app_state["queue"][app_state["current_index"]]['link'])
             else: mpv_send(["seek",0,"absolute"])
     elif action == "shuffle":
         with state_lock:
@@ -288,6 +388,14 @@ def control(action):
     elif action == "seek":
         try: mpv_send(["seek",float(request.args.get('val',0)),"absolute-percent"])
         except: pass
+    elif action == "output":
+        target = request.args.get('mode') or 'jack'
+        dev_map = {"jack":"alsa/plughw:1,2","hdmi":"alsa/plughw:2,0","bluetooth":f"alsa/bluealsa:DEV={app_state.get('connected_bt_mac','')},PROFILE=a2dp"}
+        dev = dev_map.get(target, "alsa/plughw:1,2")
+        mpv_send(["set_property","audio-device",dev])
+        open(MODE_FILE,'w').write(dev)
+        with state_lock: app_state["status_output"] = target
+        return jsonify({"status":"ok","active":target})
     return jsonify({"status":"ok"})
 
 @app.route('/play', methods=['GET','POST'])
@@ -300,31 +408,29 @@ def play():
         if mode == 'play_now':
             app_state["queue"] = [{'link':url, 'title':title}]
             app_state["current_index"] = 0
+            app_state["error_count"] = 0
             if app_state["play_mode"] == "browser" and os.path.exists(url):
-                app_state["status"] = "playing"
-                app_state["title"] = title
+                app_state["status"] = "playing"; app_state["title"] = title
             else:
                 threading.Thread(target=trigger_server_play, args=(url,)).start()
         elif mode == 'enqueue':
             app_state["queue"].append({'link':url, 'title':title})
             if app_state["status"]=="stopped" and len(app_state["queue"])==1:
-                app_state["current_index"]=0
-                threading.Thread(target=trigger_server_play, args=(url,)).start()
+                app_state["current_index"]=0; threading.Thread(target=trigger_server_play, args=(url,)).start()
     return jsonify({"status":"ok","mode":mode,"queue_len":len(app_state["queue"])})
 
 @app.route('/play/mode')
 def set_play_mode():
     mode = request.args.get('mode','server')
     with state_lock: app_state["play_mode"] = mode
-    if mode == "browser":
-        mpv_send(["stop"])
+    if mode == "browser": mpv_send(["stop"])
     return jsonify({"status":"ok","mode":mode})
 
 @app.route('/play/current')
 def play_current():
     with state_lock:
         idx = app_state["current_index"]
-        if idx >= 0 and idx < len(app_state["queue"]):
+        if 0 <= idx < len(app_state["queue"]):
             s = app_state["queue"][idx]
             return jsonify({"index":idx,"title":s['title'],"link":s['link'],"thumb":app_state["thumb"]})
         return jsonify({"index":-1})
@@ -333,6 +439,25 @@ def play_current():
 def next_browser():
     play_next()
     return play_current()
+
+@app.route('/control/eq')
+def set_eq():
+    p = request.args; g = {}
+    for i in range(1,11): g[f'f{i}'] = p.get(f'f{i}',0)
+    af_state["eq"] = f"lavfi=[{generate_fireq_cmd(g)}]"
+    update_mpv_filters()
+    return jsonify({"status":"ok"})
+
+@app.route('/control/preset')
+def set_preset():
+    n = request.args.get('name')
+    if n in EQ_PRESETS:
+        p = EQ_PRESETS[n]
+        af_state["eq"] = f"lavfi=[{generate_fireq_cmd(p)}]"
+        update_mpv_filters()
+        with state_lock: app_state["active_preset"] = n
+        return jsonify(p)
+    return jsonify({"error":"not found"}),404
 
 @app.route('/control/bitperfect')
 def toggle_bitperfect():
@@ -350,23 +475,16 @@ def get_bitperfect():
     if os.path.exists(BP_MODE_FILE): a = open(BP_MODE_FILE).read().strip()=="1"
     return jsonify({"active":a})
 
-@app.route('/control/eq')
-def set_eq():
-    p = request.args; g = {}
-    for i in range(1,11): g[f'f{i}'] = p.get(f'f{i}',0)
-    af_state["eq"] = f"lavfi=[{generate_fireq_cmd(g)}]"
-    if not af_state["eq"]: af_state["eq"] = ""
-    return jsonify({"status":"ok"})
+@app.route('/control/crossfeed')
+def toggle_crossfeed():
+    state = request.args.get('state','on')
+    af_state["crossfeed"] = "lavfi=[bs2b=profile=cmoy]" if state=='on' else ""
+    update_mpv_filters()
+    return jsonify({"status":"ok","crossfeed":state=='on'})
 
-@app.route('/control/preset')
-def set_preset():
-    n = request.args.get('name')
-    if n in EQ_PRESETS:
-        p = EQ_PRESETS[n]
-        af_state["eq"] = f"lavfi=[{generate_fireq_cmd(p)}]"
-        with state_lock: app_state["active_preset"] = n
-        return jsonify(p)
-    return jsonify({"error":"not found"}),404
+@app.route('/get_crossfeed')
+def get_crossfeed():
+    return jsonify({"active":len(af_state["crossfeed"])>0})
 
 @app.route('/queue/list')
 def get_queue():
@@ -439,8 +557,7 @@ def import_m3u():
         if line: tr.append({"link":line,"title":ct}); ct="Unknown"
     with state_lock:
         app_state["queue"].extend(tr)
-        if app_state["status"]=="stopped" and len(app_state["queue"])>0:
-            app_state["current_index"]=0
+        if app_state["status"]=="stopped" and len(app_state["queue"])>0: app_state["current_index"]=0
     return jsonify({"status":"ok","imported":len(tr)})
 
 @app.route('/control/balance')
@@ -449,6 +566,7 @@ def set_balance():
     except: l=1.0; r=1.0
     if l>=0.99 and r>=0.99: af_state["balance"]=""
     else: af_state["balance"]=f"lavfi=[pan=stereo|c0={l:.2f}*c0|c1={r:.2f}*c1]"
+    update_mpv_filters()
     return jsonify({"status":"ok","L":l,"R":r})
 
 @app.route('/library/scan')
