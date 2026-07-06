@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+
+# Logs
+*.log
+
+# Data directory
+data/
+
+# Static covers (generated)
+static/covers/
+
+# Playlist (user generated)
+playlist.json
+
+# Temp / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+temp_fa.zip
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime
+default_path.txt
+run.sh
