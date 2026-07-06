@@ -19,25 +19,25 @@ except ImportError:
     lib_mgr = None
 
 # Environment-based configuration
-OWMB_PORT = int(os.environ.get('OWMB_PORT', 2030))
-OWMB_HOST = os.environ.get('OWMB_HOST', '0.0.0.0')
-OWMB_LOG_LEVEL = os.environ.get('OWMB_LOG_LEVEL', 'INFO').upper()
-OWMB_DB_PATH = os.environ.get('OWMB_DB_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'music.db'))
-OWMB_DEFAULT_PATH = os.environ.get('OWMB_DEFAULT_PATH', '/root/music')
+OWRTMB_PORT = int(os.environ.get('OWRTMB_PORT', 2030))
+OWRTMB_HOST = os.environ.get('OWRTMB_HOST', '0.0.0.0')
+OWRTMB_LOG_LEVEL = os.environ.get('OWRTMB_LOG_LEVEL', 'INFO').upper()
+OWRTMB_DB_PATH = os.environ.get('OWRTMB_DB_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'music.db'))
+OWRTMB_DEFAULT_PATH = os.environ.get('OWRTMB_DEFAULT_PATH', '/root/music')
 
 # Logging Configuration
-log_level = getattr(logging, OWMB_LOG_LEVEL, logging.INFO)
+log_level = getattr(logging, OWRTMB_LOG_LEVEL, logging.INFO)
 logging.basicConfig(
     level=log_level,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openwrt_music_box.log'))
+        logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'owrt_musicbox.log'))
     ]
 )
-logger = logging.getLogger('OpenWrtMusicBox')
-logger.info(f"Starting OpenWrt-Music-Box on {OWMB_HOST}:{OWMB_PORT} (log level: {OWMB_LOG_LEVEL})")
+logger = logging.getLogger('OwrtMusicBox')
+logger.info(f"Starting Owrt-MusicBox on {OWRTMB_HOST}:{OWRTMB_PORT} (log level: {OWRTMB_LOG_LEVEL})")
 
 app = Flask(__name__)
 
@@ -59,7 +59,7 @@ state_lock = Lock()
 yt_music = YTMusic()
 needs_restore = False
 
-owmb_state = {
+owrtmb_state = {
     "title": "Ready", 
     "artist": "Waiting...", 
     "album": "",
@@ -116,7 +116,7 @@ def update_mpv_filters():
     if is_bp_active():
         mpv_send(["set_property", "af", ""]) 
         mpv_send(["set_property", "volume", 100])
-        with state_lock: owmb_state["volume"] = 100
+        with state_lock: owrtmb_state["volume"] = 100
         return 
     
     filters = []
@@ -163,35 +163,35 @@ def trigger_play(url):
     global needs_restore
     if os.path.exists(PLAY_SCRIPT):
         with state_lock: 
-            owmb_state["last_play_time"] = time.time()
-            if "http" in url: owmb_state["thumb"] = get_yt_thumb(url)
-            else: owmb_state["thumb"] = ""
-            owmb_state["status"] = "loading"
-            owmb_state["manual_stop"] = False 
+            owrtmb_state["last_play_time"] = time.time()
+            if "http" in url: owrtmb_state["thumb"] = get_yt_thumb(url)
+            else: owrtmb_state["thumb"] = ""
+            owrtmb_state["status"] = "loading"
+            owrtmb_state["manual_stop"] = False 
         
         needs_restore = True
         subprocess.Popen(["/bin/bash", PLAY_SCRIPT, url])
 
 def play_next_in_queue():
     with state_lock:
-        if not owmb_state["queue"]: return
-        time_diff = time.time() - owmb_state.get("last_play_time", 0)
+        if not owrtmb_state["queue"]: return
+        time_diff = time.time() - owrtmb_state.get("last_play_time", 0)
         
-        if time_diff < 2.0: owmb_state["error_count"] += 1
-        else: owmb_state["error_count"] = 0
+        if time_diff < 2.0: owrtmb_state["error_count"] += 1
+        else: owrtmb_state["error_count"] = 0
             
-        if owmb_state["error_count"] > 5:
-            owmb_state["status"] = "stopped"
-            owmb_state["error_count"] = 0
+        if owrtmb_state["error_count"] > 5:
+            owrtmb_state["status"] = "stopped"
+            owrtmb_state["error_count"] = 0
             return
 
-        next_idx = owmb_state["current_index"] + 1
-        if next_idx < len(owmb_state["queue"]):
-            owmb_state["current_index"] = next_idx
-            next_song = owmb_state["queue"][next_idx]
+        next_idx = owrtmb_state["current_index"] + 1
+        if next_idx < len(owrtmb_state["queue"]):
+            owrtmb_state["current_index"] = next_idx
+            next_song = owrtmb_state["queue"][next_idx]
             threading.Thread(target=trigger_play, args=(next_song['link'],)).start()
         else:
-            owmb_state["status"] = "stopped"
+            owrtmb_state["status"] = "stopped"
 
 def find_key_insensitive(data, search_keys):
     if not data or not isinstance(data, dict): return ""
@@ -217,7 +217,7 @@ def get_audio_device_string(mode):
     elif mode == "bluetooth":
         mac, name = get_connected_bt()
         if mac: return f"alsa/bluealsa:DEV={mac},PROFILE=a2dp"
-        return f"alsa/bluealsa:DEV={owmb_state.get('connected_bt_mac','')},PROFILE=a2dp"
+        return f"alsa/bluealsa:DEV={owrtmb_state.get('connected_bt_mac','')},PROFILE=a2dp"
     return "alsa/plughw:1,2"
 
 def metadata_worker():
@@ -231,15 +231,15 @@ def metadata_worker():
         try:
             bt_mac, bt_name = get_connected_bt()
             with state_lock:
-                owmb_state["connected_bt_mac"] = bt_mac or ""
-                owmb_state["connected_bt_name"] = bt_name or ""
+                owrtmb_state["connected_bt_mac"] = bt_mac or ""
+                owrtmb_state["connected_bt_name"] = bt_name or ""
 
             with state_lock:
-                target = owmb_state["sleep_target"]
+                target = owrtmb_state["sleep_target"]
                 if target > 0 and time.time() >= target:
-                    owmb_state["sleep_target"] = 0
-                    owmb_state["queue"] = []
-                    owmb_state["current_index"] = -1
+                    owrtmb_state["sleep_target"] = 0
+                    owrtmb_state["queue"] = []
+                    owrtmb_state["current_index"] = -1
                     threading.Thread(target=mpv_send, args=(["stop"],)).start()
             
             mpv_ready = False
@@ -256,7 +256,7 @@ def metadata_worker():
                     last_path = path
                     needs_restore = False
                     time.sleep(0.5)
-                    with state_lock: saved_vol = owmb_state["volume"]
+                    with state_lock: saved_vol = owrtmb_state["volume"]
                     mpv_send(["set_property", "volume", saved_vol])
                     update_mpv_filters()
 
@@ -264,12 +264,12 @@ def metadata_worker():
                 is_idle = mpv_send(["get_property", "idle-active"])
                 
                 with state_lock:
-                    current_manual_stop = owmb_state.get("manual_stop", False)
-                    current_status = owmb_state.get("status", "stopped")
+                    current_manual_stop = owrtmb_state.get("manual_stop", False)
+                    current_status = owrtmb_state.get("status", "stopped")
                 
                 if current_manual_stop:
                     if is_idle:
-                        with state_lock: owmb_state["manual_stop"] = False
+                        with state_lock: owrtmb_state["manual_stop"] = False
                 elif is_eof is True or (is_idle is True and current_status == "playing"):
                     play_next_in_queue()
                     time.sleep(1)
@@ -278,8 +278,8 @@ def metadata_worker():
                 final_thumb = ""
                 queue_title = "Unknown Title"
                 with state_lock:
-                    if owmb_state["queue"] and owmb_state["current_index"] < len(owmb_state["queue"]):
-                        queue_item = owmb_state["queue"][owmb_state["current_index"]]
+                    if owrtmb_state["queue"] and owrtmb_state["current_index"] < len(owrtmb_state["queue"]):
+                        queue_item = owrtmb_state["queue"][owrtmb_state["current_index"]]
                         final_thumb = queue_item.get('thumb', '')
                         queue_title = queue_item.get('title', 'Unknown Title')
                 
@@ -289,7 +289,7 @@ def metadata_worker():
                     else:
                         loc = extract_local_cover(path)
                         if loc: final_thumb = loc
-                with state_lock: owmb_state["thumb"] = final_thumb
+                with state_lock: owrtmb_state["thumb"] = final_thumb
 
                 meta_all = mpv_send(["get_property", "metadata"]) or {}
                 mpv_title = mpv_send(["get_property", "media-title"])
@@ -376,7 +376,7 @@ def metadata_worker():
                 temp_info = " • ".join(tech_display)
                 
                 with state_lock:
-                    owmb_state.update({
+                    owrtmb_state.update({
                         "title": final_title,
                         "artist": temp_artist, "album": temp_album,
                         "genre": temp_genre, "year": temp_year,
@@ -386,12 +386,12 @@ def metadata_worker():
                         "total_time": mpv_send(["get_property", "duration"]) or 0
                     })
                     val_vol = mpv_send(["get_property", "volume"])
-                    if val_vol is not None: owmb_state["volume"] = val_vol
+                    if val_vol is not None: owrtmb_state["volume"] = val_vol
             else:
                 idle_counter += 1
                 if idle_counter == 5:
-                    with state_lock: owmb_state["status"] = "stopped"
-                with state_lock: idle_status = owmb_state["status"]
+                    with state_lock: owrtmb_state["status"] = "stopped"
+                with state_lock: idle_status = owrtmb_state["status"]
                 if idle_counter == 15 and idle_status != "stopped":
                     play_next_in_queue()
                     
@@ -407,7 +407,7 @@ def index(): return render_template('index.html')
 @app.route('/status')
 def status():
     with state_lock:
-        resp = owmb_state.copy()
+        resp = owrtmb_state.copy()
         target = resp.get("sleep_target", 0)
         if target > 0:
             remaining = int(target - time.time())
@@ -425,13 +425,13 @@ def status():
 @app.route('/get_lyrics')
 def get_lyrics():
     with state_lock:
-        artist = owmb_state.get("artist", "")
-        title = owmb_state.get("title", "")
+        artist = owrtmb_state.get("artist", "")
+        title = owrtmb_state.get("title", "")
     
     if not title: return jsonify({"error": "No track info"})
 
     clean_title = re.sub(r"\(.*?\)|\[.*?\]|【.*?】", "", title).strip()
-    headers = {"User-Agent": "OpenWrtMusicBox/1.0"}
+    headers = {"User-Agent": "OwrtMusicBox/1.0"}
     
     try:
         if not artist or artist == "Unknown Artist":
@@ -514,9 +514,9 @@ def bt_connect():
             with open(MODE_FILE, "w") as f: f.write(dev_str)
             
             with state_lock:
-                owmb_state["connected_bt_mac"] = mac
-                owmb_state["connected_bt_name"] = dev_name
-                owmb_state["status_output"] = "bluetooth"
+                owrtmb_state["connected_bt_mac"] = mac
+                owrtmb_state["connected_bt_name"] = dev_name
+                owrtmb_state["status_output"] = "bluetooth"
                 
             return jsonify({"status":"ok", "name": dev_name})
         else:
@@ -545,7 +545,7 @@ def toggle_bitperfect():
     
     if new_state == "0":
         mpv_send(["set_property", "volume", 30])
-        with state_lock: owmb_state["volume"] = 30
+        with state_lock: owrtmb_state["volume"] = 30
 
     return jsonify({"status": "ok", "bitperfect": new_state == "1"})
 
@@ -572,10 +572,10 @@ def jump_to_index():
     try:
         idx = int(request.args.get('index', -1))
         with state_lock:
-            if 0 <= idx < len(owmb_state["queue"]):
-                owmb_state["current_index"] = idx
-                song = owmb_state["queue"][idx]
-                owmb_state["error_count"] = 0
+            if 0 <= idx < len(owrtmb_state["queue"]):
+                owrtmb_state["current_index"] = idx
+                song = owrtmb_state["queue"][idx]
+                owrtmb_state["error_count"] = 0
                 threading.Thread(target=trigger_play, args=(song['link'],)).start()
                 return jsonify({"status": "ok", "title": song['title']})
     except: pass
@@ -602,12 +602,12 @@ def play():
                         full_path = os.path.join(folder_path, fname)
                         new_queue.append({'link': full_path, 'title': fname})
                         if full_path == url: target_index = idx
-                    owmb_state["queue"] = new_queue
-                    owmb_state["current_index"] = target_index
+                    owrtmb_state["queue"] = new_queue
+                    owrtmb_state["current_index"] = target_index
                 except:
-                    owmb_state["queue"] = [song_obj]; owmb_state["current_index"] = 0
+                    owrtmb_state["queue"] = [song_obj]; owrtmb_state["current_index"] = 0
             elif "youtube.com" in url or "youtu.be" in url:
-                owmb_state["queue"] = [song_obj]; owmb_state["current_index"] = 0
+                owrtmb_state["queue"] = [song_obj]; owrtmb_state["current_index"] = 0
                 try:
                     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
                     video_id = match.group(1) if match else None
@@ -621,19 +621,19 @@ def play():
                                     t_artist = t['artists'][0]['name'] if 'artists' in t and t['artists'] else ""
                                     full_title = f"{t_artist} - {t['title']}" if t_artist else t['title']
                                     new_queue.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
-                            if new_queue: owmb_state["queue"] = new_queue; owmb_state["current_index"] = 0
+                            if new_queue: owrtmb_state["queue"] = new_queue; owrtmb_state["current_index"] = 0
                 except: pass
             else:
-                owmb_state["queue"] = [song_obj]; owmb_state["current_index"] = 0
+                owrtmb_state["queue"] = [song_obj]; owrtmb_state["current_index"] = 0
             
-            owmb_state["error_count"] = 0
+            owrtmb_state["error_count"] = 0
             threading.Thread(target=trigger_play, args=(url,)).start()
         elif mode == 'enqueue':
-            owmb_state["queue"].append(song_obj)
-            if owmb_state["status"] == "stopped" and len(owmb_state["queue"]) == 1:
-                owmb_state["current_index"] = 0
+            owrtmb_state["queue"].append(song_obj)
+            if owrtmb_state["status"] == "stopped" and len(owrtmb_state["queue"]) == 1:
+                owrtmb_state["current_index"] = 0
                 threading.Thread(target=trigger_play, args=(url,)).start()
-    return jsonify({"status": "ok", "mode": mode, "queue_len": len(owmb_state["queue"])})
+    return jsonify({"status": "ok", "mode": mode, "queue_len": len(owrtmb_state["queue"])})
 
 @app.route('/control/<action>')
 def control(action):
@@ -641,32 +641,32 @@ def control(action):
     elif action == "stop":
         mpv_send(["stop"])
         with state_lock:
-            owmb_state["status"] = "stopped"
-            owmb_state["queue"] = []
-            owmb_state["current_index"] = -1
-            owmb_state["manual_stop"] = True
+            owrtmb_state["status"] = "stopped"
+            owrtmb_state["queue"] = []
+            owrtmb_state["current_index"] = -1
+            owrtmb_state["manual_stop"] = True
     elif action == "next": play_next_in_queue()
     elif action == "prev":
         with state_lock:
-            if owmb_state["current_index"] > 0:
-                owmb_state["current_index"] -= 1
-                prev_song = owmb_state["queue"][owmb_state["current_index"]]
+            if owrtmb_state["current_index"] > 0:
+                owrtmb_state["current_index"] -= 1
+                prev_song = owrtmb_state["queue"][owrtmb_state["current_index"]]
                 trigger_play(prev_song['link'])
             else: mpv_send(["seek", 0, "absolute"])
     elif action == "shuffle":
         with state_lock:
-            if len(owmb_state["queue"]) > 1:
-                current_song = owmb_state["queue"][owmb_state["current_index"]]
-                random.shuffle(owmb_state["queue"])
-                for idx, song in enumerate(owmb_state["queue"]):
+            if len(owrtmb_state["queue"]) > 1:
+                current_song = owrtmb_state["queue"][owrtmb_state["current_index"]]
+                random.shuffle(owrtmb_state["queue"])
+                for idx, song in enumerate(owrtmb_state["queue"]):
                     if song['link'] == current_song['link']:
-                        owmb_state["current_index"] = idx; break
+                        owrtmb_state["current_index"] = idx; break
         return jsonify({"status": "shuffled"})
     elif action == "volume":
         try: 
             v = int(request.args.get('val', 30))
             mpv_send(["set_property", "volume", v])
-            with state_lock: owmb_state["volume"] = v
+            with state_lock: owrtmb_state["volume"] = v
         except: pass
     elif action == "seek":
         try: mpv_send(["seek", float(request.args.get('val', 0)), "absolute-percent"])
@@ -678,7 +678,7 @@ def control(action):
         if os.path.exists(TOGGLE_SCRIPT): subprocess.run(["/bin/bash", TOGGLE_SCRIPT, dev_string], check=False)
         else:
             with open(MODE_FILE, "w") as f: f.write(dev_string)
-        with state_lock: owmb_state["status_output"] = target
+        with state_lock: owrtmb_state["status_output"] = target
         return jsonify({"status": "ok", "active": target})
     return jsonify({"status": "ok"})
 
@@ -699,7 +699,7 @@ def set_eq():
     cmd_str = generate_fireq_cmd(gains)
     af_state["eq"] = f"lavfi=[{cmd_str}]"
     update_mpv_filters()
-    with state_lock: owmb_state["current_eq_cmd"] = af_state["eq"]
+    with state_lock: owrtmb_state["current_eq_cmd"] = af_state["eq"]
     return jsonify({"status": "ok"})
 
 @app.route('/control/preset')
@@ -711,18 +711,18 @@ def set_preset():
         af_state["eq"] = f"lavfi=[{cmd_str}]"
         update_mpv_filters()
         with state_lock: 
-            owmb_state["active_preset"] = n
-            owmb_state["current_eq_cmd"] = af_state["eq"]
+            owrtmb_state["active_preset"] = n
+            owrtmb_state["current_eq_cmd"] = af_state["eq"]
         return jsonify(preset)
     return jsonify({"error": "not found"}), 404
 
 @app.route('/queue/list')
 def get_queue():
-    with state_lock: return jsonify({"queue": owmb_state["queue"], "current_index": owmb_state["current_index"]})
+    with state_lock: return jsonify({"queue": owrtmb_state["queue"], "current_index": owrtmb_state["current_index"]})
 
 @app.route('/queue/clear')
 def clear_queue():
-    with state_lock: owmb_state["queue"] = []; owmb_state["current_index"] = -1
+    with state_lock: owrtmb_state["queue"] = []; owrtmb_state["current_index"] = -1
     return jsonify({"status": "cleared"})
 
 @app.route('/get_files')
@@ -794,14 +794,13 @@ def handle_default_path():
 def set_timer():
     try: minutes = int(request.args.get('min', 0))
     except: minutes = 0
-    with state_lock: owmb_state["sleep_target"] = (time.time() + minutes*60) if minutes > 0 else 0
+    with state_lock: owrtmb_state["sleep_target"] = (time.time() + minutes*60) if minutes > 0 else 0
     return jsonify({"status": "ok", "timer": minutes})
 
 @app.route('/system/power_mode')
 def set_power_mode():
     mode = request.args.get('mode', 'portable')
     logger.info(f"Power mode set to: {mode}")
-    # Power mode affects buffer sizes and processing
     if mode == 'home':
         mpv_send(["set_property", "audio-buffer", 1.0])
     else:
@@ -826,7 +825,7 @@ def save_playlist():
 @app.route('/playlist/export_m3u')
 def export_m3u():
     with state_lock:
-        tracks = owmb_state["queue"]
+        tracks = owrtmb_state["queue"]
     lines = ["#EXTM3U"]
     for t in tracks:
         title = t.get('title', 'Unknown')
@@ -853,9 +852,9 @@ def import_m3u():
             tracks.append({"link": line, "title": current_title})
             current_title = "Unknown"
     with state_lock:
-        owmb_state["queue"].extend(tracks)
-        if owmb_state["status"] == "stopped" and len(owmb_state["queue"]) > 0:
-            owmb_state["current_index"] = 0
+        owrtmb_state["queue"].extend(tracks)
+        if owrtmb_state["status"] == "stopped" and len(owrtmb_state["queue"]) > 0:
+            owrtmb_state["current_index"] = 0
             threading.Thread(target=trigger_play, args=(tracks[0]['link'],)).start()
     return jsonify({"status": "ok", "imported": len(tracks)})
 
@@ -878,7 +877,7 @@ def set_balance():
 @app.route('/library/scan')
 def scan_library():
     if lib_mgr:
-        scan_path = OWMB_DEFAULT_PATH
+        scan_path = OWRTMB_DEFAULT_PATH
         if os.path.exists(DEFAULT_PATH_FILE):
             try:
                 with open(DEFAULT_PATH_FILE, 'r') as f: scan_path = f.read().strip()
@@ -933,4 +932,4 @@ def search_db():
 if __name__ == '__main__':
     import subprocess
     subprocess.run("pgrep bluealsa || bluealsa -p a2dp-source -p a2dp-sink &", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    app.run(host=OWMB_HOST, port=OWMB_PORT, debug=False)
+    app.run(host=OWRTMB_HOST, port=OWRTMB_PORT, debug=False)

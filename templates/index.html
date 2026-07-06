@@ -3,150 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>OpenWrt Music Box Pro</title>
-    
+    <title>Owrt-MusicBox</title>
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-    <meta name="theme-color" content="#050505">
+    <meta name="theme-color" content="#0a0a0f">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icon-192.png') }}">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    
     <link rel="stylesheet" href="{{ url_for('static', filename='css/all.min.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=OFFLINE_READY">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='img/favicon.ico') }}">
 </head>
 <body>
-
 <div class="bg-layer"></div>
 
 <div class="player-card">
-    
+    <!-- Header -->
     <div class="header">
-        <span class="brand" onclick="toggleTheme()">OpenWrt Music Box</span>
-        
-        <button class="btn-ctl tiny" onclick="toggleQuickMenu()" id="btn-main-menu" style="z-index: 102;">
-            <i class="fa-solid fa-bars"></i>
+        <span class="brand" onclick="toggleTheme()">Owrt-MusicBox</span>
+        <button class="btn-icon" onclick="toggleQuickMenu()" id="btn-main-menu">
+            <i class="fa-solid fa-ellipsis-vertical"></i>
         </button>
-
         <div id="quick-menu" class="quick-menu-panel">
             <div class="menu-grid">
-                <button class="btn-ctl tiny" id="btn-output" onclick="tg('om'); toggleQuickMenu()">
-                    <i class="fa-solid fa-headphones"></i>
-                </button>
-                
-                <button class="btn-ctl tiny" id="btn-xf" onclick="toggleCrossfeed()" style="position: relative;">
-                    <i class="fa-solid fa-globe"></i>
-                    <span id="xf-indicator" class="dot-indicator" style="background:#ff00ff; display:none;"></span>
-                </button>
-                
-                <button class="btn-ctl tiny" id="btn-bp" onclick="toggleBitPerfect()" style="position: relative;">
-                    <i class="fa-solid fa-microchip"></i>
-                    <span id="bp-indicator" class="dot-indicator" style="background:#00ff00; display:none;"></span>
-                </button>
-                
-                <button class="btn-ctl tiny" id="btn-timer" onclick="tg('tm'); toggleQuickMenu()" style="position: relative;">
-                    <i class="fa-solid fa-stopwatch"></i>
-                    <span id="timer-badge" class="badge-indicator" style="display:none;"></span>
-                </button>
-                
-                <button class="btn-ctl tiny" onclick="toggleLyrics(); toggleQuickMenu()" id="btn-lyrics">
-                    <i class="fa-solid fa-microphone-lines"></i>
-                </button>
-                
-                <button class="btn-ctl tiny" onclick="tg('pm'); toggleQuickMenu()">
-                    <i class="fa-solid fa-list-ul"></i>
-                </button>
+                <button class="btn-icon" id="btn-output" onclick="tg('om'); toggleQuickMenu()"><i class="fa-solid fa-headphones"></i></button>
+                <button class="btn-icon" id="btn-xf" onclick="toggleCrossfeed()" style="position:relative;"><i class="fa-solid fa-globe"></i><span id="xf-indicator" class="dot-indicator" style="background:#ff00ff;display:none;"></span></button>
+                <button class="btn-icon" id="btn-bp" onclick="toggleBitPerfect()" style="position:relative;"><i class="fa-solid fa-microchip"></i><span id="bp-indicator" class="dot-indicator" style="background:#00ff88;display:none;"></span></button>
+                <button class="btn-icon" id="btn-timer" onclick="tg('tm');toggleQuickMenu()" style="position:relative;"><i class="fa-solid fa-stopwatch"></i><span id="timer-badge" class="badge-indicator" style="display:none;"></span></button>
+                <button class="btn-icon" onclick="toggleLyrics();toggleQuickMenu()" id="btn-lyrics"><i class="fa-solid fa-microphone-lines"></i></button>
+                <button class="btn-icon" onclick="tg('pm');toggleQuickMenu()"><i class="fa-solid fa-list-ul"></i></button>
             </div>
         </div>
     </div>
 
-    <div class="dashboard-row">
-        <div class="disk-container">
-            <div class="disc-wrapper" id="discArea">
-                <img id="cover-img" src="/static/img/default.png" alt="Cover" class="album-label spinning" onerror="this.src='/static/img/default.png'">
-            </div>
+    <!-- Album Art -->
+    <div class="art-section">
+        <div class="art-wrapper" id="discArea">
+            <img id="cover-img" src="/static/img/default.png" alt="" class="art-img" onerror="this.src='/static/img/default.png'">
+            <div class="art-glow"></div>
         </div>
-        <div class="info-container">
-            <div class="marquee-wrapper"><h2 id="tit">Ready</h2></div>
-            <h3 id="art">OpenWrt Music Box</h3>
-            <p id="alb" class="meta-album" style="display:none;">Album Name</p>
-            <div class="meta-row" id="meta-row">
-                <span id="cat-badge" class="badge" style="display:none;">UNK</span>
-                <span id="genre" class="badge" style="display:none;">Genre</span>
-                <span id="year" class="badge" style="display:none;">Year</span>
+        <div class="track-info">
+            <div class="track-title" id="tit">Ready</div>
+            <div class="track-artist" id="art">Owrt-MusicBox</div>
+            <div class="track-meta" id="meta-row">
+                <span id="cat-badge" class="track-badge" style="display:none;">UNK</span>
+                <span id="genre" class="track-badge" style="display:none;">Genre</span>
+                <span id="year" class="track-badge" style="display:none;">Year</span>
             </div>
-            <div id="tech-specs" class="meta-tech">WAITING SIGNAL...</div>
+            <div class="tech-spec" id="tech-specs">WAITING SIGNAL...</div>
         </div>
     </div>
 
-    <div class="time-box">
-        <span class="time-txt" id="t-cur">0:00</span>
-        <input type="range" id="pb" min="0" max="100" value="0">
-        <span class="time-txt" id="t-tot">0:00</span>
-    </div>
-
-    <div class="console-deck">
-        <div class="deck-section eq-section">
-            <div class="deck-label">
-                <span>EQUALIZER</span>
-                <button onclick="tg('pr-om')" class="preset-link">
-                    <span id="cur-preset-txt">PRESETS</span>
-                    <i class="fa-solid fa-chevron-down"></i>
-                </button>
-            </div>
-            <div class="eq-grid">
-                <div class="knob-wrap"><div class="knob-common small" id="k-f1" data-type="f1"></div><label>Sub</label><span class="eq-val" id="v-f1">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f2" data-type="f2"></div><label>Low</label><span class="eq-val" id="v-f2">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f3" data-type="f3"></div><label>Kick</label><span class="eq-val" id="v-f3">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f4" data-type="f4"></div><label>Mid</label><span class="eq-val" id="v-f4">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f5" data-type="f5"></div><label>Body</label><span class="eq-val" id="v-f5">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f6" data-type="f6"></div><label>Vox</label><span class="eq-val" id="v-f6">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f7" data-type="f7"></div><label>Detl</label><span class="eq-val" id="v-f7">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f8" data-type="f8"></div><label>Pres</label><span class="eq-val" id="v-f8">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f9" data-type="f9"></div><label>Treb</label><span class="eq-val" id="v-f9">0</span></div>
-                <div class="knob-wrap"><div class="knob-common small" id="k-f10" data-type="f10"></div><label>Air</label><span class="eq-val" id="v-f10">0</span></div>
-            </div>
-        </div>
-        <div class="deck-separator"></div>
-        <div class="deck-section vol-section">
-            <div class="deck-label" style="justify-content:center;">MASTER</div>
-            <div class="vol-wrapper" style="display:flex; flex-direction:column; align-items:center;">
-                <div class="knob-common large" id="k-vol" data-type="vol"></div>
-                <span id="v-vol-val">50%</span>
-            </div>
+    <!-- Seek Bar -->
+    <div class="seek-section">
+        <div class="seek-row">
+            <span class="time-txt" id="t-cur">0:00</span>
+            <input type="range" id="pb" min="0" max="100" value="0">
+            <span class="time-txt" id="t-tot">0:00</span>
         </div>
     </div>
 
-    <div class="balance-container">
-        <div class="bal-header">
-            <span>Left</span>
-            <span id="bal-label" style="color:var(--primary);">CENTER</span>
-            <span>Right</span>
+    <!-- Controls -->
+    <div class="controls">
+        <button class="ctrl-btn small" id="btn-shuf" onclick="ctl('shuffle')"><i class="fa-solid fa-shuffle"></i></button>
+        <button class="ctrl-btn" onclick="ctl('prev')"><i class="fa-solid fa-backward-step"></i></button>
+        <button class="ctrl-btn play-btn" id="btn-play-pause" onclick="ctl('pause')"><i class="fa-solid fa-play" id="pi"></i></button>
+        <button class="ctrl-btn" onclick="ctl('next')"><i class="fa-solid fa-forward-step"></i></button>
+        <button class="ctrl-btn small" id="btn-loop" onclick="ctl('loop')"><i class="fa-solid fa-repeat"></i></button>
+    </div>
+
+    <!-- EQ Section -->
+    <div class="eq-section" id="eq-section">
+        <div class="eq-header" onclick="toggleEq()">
+            <span>EQUALIZER</span>
+            <button class="preset-btn" onclick="event.stopPropagation();tg('pr-om')">
+                <span id="cur-preset-txt">PRESETS</span> <i class="fa-solid fa-chevron-down"></i>
+            </button>
         </div>
-        <div class="bal-controls">
-            <button onclick="toggleMuteSide('L')" id="btn-mute-l" class="btn-mute-side">MUTE L</button>
-            <input type="range" id="balanceSlider" min="-100" max="100" value="0" step="5" oninput="updateBalance(this.value)" ondblclick="resetBalance()">
-            <button onclick="toggleMuteSide('R')" id="btn-mute-r" class="btn-mute-side">MUTE R</button>
+        <div class="eq-grid">
+            <div class="knob-wrap"><div class="knob-common" id="k-f1" data-type="f1"></div><label>Sub</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f2" data-type="f2"></div><label>Low</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f3" data-type="f3"></div><label>Kick</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f4" data-type="f4"></div><label>Mid</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f5" data-type="f5"></div><label>Body</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f6" data-type="f6"></div><label>Vox</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f7" data-type="f7"></div><label>Detl</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f8" data-type="f8"></div><label>Pres</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f9" data-type="f9"></div><label>Treb</label></div>
+            <div class="knob-wrap"><div class="knob-common" id="k-f10" data-type="f10"></div><label>Air</label></div>
         </div>
     </div>
 
-    <div class="main-controls">
-        <button class="btn-ctl small" id="btn-shuf" onclick="ctl('shuffle')"><i class="fa-solid fa-shuffle"></i></button>
-        <button class="btn-ctl" onclick="ctl('prev')"><i class="fa-solid fa-backward-step"></i></button>
-        <button class="btn-ctl" onclick="ctl('stop')"><i class="fa-solid fa-stop"></i></button>
-        <button class="btn-play" id="btn-play-pause" onclick="ctl('pause')"><i class="fa-solid fa-play" id="pi"></i></button>
-        <button class="btn-ctl" onclick="ctl('next')"><i class="fa-solid fa-forward-step"></i></button>
-        <button class="btn-ctl small" id="btn-loop" onclick="ctl('loop')"><i class="fa-solid fa-repeat"></i></button>
+    <!-- Volume + Balance -->
+    <div style="display:flex;align-items:center;gap:8px;padding:2px 0;flex-shrink:0;">
+        <div style="display:flex;align-items:center;gap:4px;flex:1;">
+            <i class="fa-solid fa-volume-low" style="color:var(--text-dim);font-size:0.7rem;"></i>
+            <div class="knob-common large" id="k-vol" data-type="vol" style="width:36px;height:36px;"></div>
+            <span id="v-vol-val" style="color:var(--primary);font-weight:700;font-size:0.8rem;min-width:32px;">50</span>
+        </div>
+        <div class="balance-row" style="flex:1.5;">
+            <span>L</span>
+            <input type="range" id="balanceSlider" min="-100" max="100" value="0" step="5">
+            <span>R</span>
+        </div>
     </div>
 
-    <div class="search-container">
-        <form onsubmit="searchYt(event)" class="url-form">
-            <input id="searchInput" class="search-input" placeholder="Search Song / Artist / URL..." autocomplete="off">
-            <button type="submit" class="btn-add"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <!-- Search -->
+    <div class="search-row">
+        <form onsubmit="searchYt(event)" class="search-form">
+            <input id="searchInput" class="search-input" placeholder="Search or paste URL..." autocomplete="off">
+            <button type="submit" class="search-btn"><i class="fa-solid fa-magnifying-glass"></i></button>
         </form>
     </div>
 </div>
 
+<!-- Media Center Overlay -->
 <div id="pm" class="overlay">
     <div class="overlay-header">
         <h2>Media Center</h2>
@@ -157,163 +127,98 @@
         <button class="tab-btn" onclick="switchTab('pl')" id="tab-pl">SAVED</button>
         <button class="tab-btn" onclick="switchTab('queue')" id="tab-queue">QUEUE</button>
     </div>
-    <div id="content-lib" class="tab-content" style="display:flex;">
-        <div class="manager-toolbar" style="flex-direction: column; gap: 5px;">
-            <div style="display:flex; gap:5px; width:100%; align-items:center;">
-                <button onclick="scanLibrary()" class="btn-refresh" style="width:auto; padding:0 12px; background:var(--primary); color:#000; font-weight:bold;">
-                    <i class="fa-solid fa-sync"></i> RESCAN
-                </button>
-                <div id="scan-status" style="flex:1; font-size:0.75rem; color:#888; white-space:nowrap; overflow:hidden;">
-                    Ready to Scan
-                </div>
-                <select id="sort-select" onchange="loadLibraryDB(this.value)" style="background:#222; color:#fff; border:1px solid #333; padding:5px; border-radius:6px; font-size:0.8rem; outline:none;">
-                    <option value="title">A-Z Title</option>
-                    <option value="artist">By Artist</option>
-                    <option value="album">By Album</option>
-                    <option value="newest">Newest</option>
-                </select>
-            </div>
-            
-            <div class="path-display" style="padding: 0 8px;">
-                <i class="fa-solid fa-search"></i>
-                <input id="lib-search" placeholder="Filter Library..." oninput="filterLibraryLocal(this.value)">
-            </div>
+    <div id="content-lib" class="tab-content active">
+        <div class="toolbar">
+            <button onclick="scanLibrary()" class="toolbar-btn primary"><i class="fa-solid fa-sync"></i> RESCAN</button>
+            <div class="path-display"><i class="fa-solid fa-search"></i><input id="lib-search" placeholder="Filter..." oninput="filterLibraryLocal(this.value)"></div>
         </div>
-
-        <div id="lib-list" class="playlist-scroll"></div>
+        <div id="scan-status" style="font-size:0.7rem;color:var(--text-dim);padding:0 4px 6px;text-align:center;">Ready to Scan</div>
+        <div id="lib-list" class="scroll-list"></div>
     </div>
-
-    <div id="content-pl" class="tab-content" style="display:none;">
-        <div class="playlist-form">
-            <input id="pl-name" class="search-input" placeholder="Name">
-            <input id="pl-url" class="search-input" placeholder="URL">
-            <button onclick="addPl()" class="btn-add"><i class="fa-solid fa-plus"></i></button>
+    <div id="content-pl" class="tab-content">
+        <div class="search-form" style="margin-bottom:10px;">
+            <input id="pl-name" class="search-input" placeholder="Name" style="border-radius:0;">
+            <input id="pl-url" class="search-input" placeholder="URL" style="border-radius:0;border-left:none;">
+            <button onclick="addPl()" class="search-btn" style="width:auto;padding:0 14px;"><i class="fa-solid fa-plus"></i></button>
         </div>
-        <div id="pl-list" class="playlist-scroll"></div>
+        <div id="pl-list" class="scroll-list"></div>
     </div>
-    <div id="content-queue" class="tab-content" style="display:none;">
-        <div class="manager-toolbar">
-            <span style="color:#aaa; font-size:0.8rem;">PLAYING NEXT</span>
-            <div style="margin-left:auto; display:flex; gap:5px;">
-                <button onclick="exportM3U()" class="btn-shortcut" style="background:#444; font-size:10px;" title="Export as M3U">
-                    <i class="fa-solid fa-download"></i> M3U
-                </button>
-                <button onclick="document.getElementById('m3u-file-input').click()" class="btn-shortcut" style="background:#444; font-size:10px;" title="Import M3U">
-                    <i class="fa-solid fa-upload"></i> M3U
-                </button>
-                <input type="file" id="m3u-file-input" accept=".m3u,.m3u8,.pls" style="display:none" onchange="importM3U(event)">
-                <button onclick="clearQueue()" class="btn-shortcut" style="background:#444;">Clear All</button>
-            </div>
+    <div id="content-queue" class="tab-content">
+        <div class="toolbar">
+            <span style="font-size:0.7rem;color:var(--text-dim);font-weight:600;">PLAYING NEXT</span>
+            <button onclick="exportM3U()" class="toolbar-btn"><i class="fa-solid fa-download"></i> M3U</button>
+            <button onclick="document.getElementById('m3u-file-input').click()" class="toolbar-btn"><i class="fa-solid fa-upload"></i> M3U</button>
+            <input type="file" id="m3u-file-input" accept=".m3u,.m3u8,.pls" style="display:none" onchange="importM3U(event)">
+            <button onclick="clearQueue()" class="toolbar-btn" style="color:#ff4444;">Clear</button>
         </div>
-        <div id="queue-list" class="playlist-scroll"></div>
+        <div id="queue-list" class="scroll-list"></div>
     </div>
 </div>
 
-<div id="om" class="output-overlay-compact">
-    <div class="output-box">
-        <div class="output-header-small">
-            <span>Audio Output</span>
-            <button onclick="tg('om')" class="close-icon">&times;</button>
-        </div>
-        <div class="output-options">
-            <button class="btn-out-compact" onclick="manualOut('jack')">
-                <i class="fa-solid fa-headphones"></i>
-                <div class="out-text"><strong>Line Out</strong><small>3.5mm Jack</small></div>
-            </button>
-            <button class="btn-out-compact" onclick="manualOut('hdmi')">
-                <i class="fa-solid fa-tv"></i>
-                <div class="out-text"><strong>HDMI</strong><small>TV Audio</small></div>
-            </button>
-            <button class="btn-out-compact" onclick="openBtManager()">
-                <i class="fa-brands fa-bluetooth-b"></i>
-                <div class="out-text"><strong>Bluetooth</strong><small>Manager</small></div>
-            </button>
-        </div>
-        <div id="bt-manager-panel" style="display:none; margin-top:10px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <span style="font-size:0.8rem; color:#aaa;">AVAILABLE DEVICES</span>
-                <button onclick="scanBt()" class="btn-ctl tiny" style="width:auto; padding:2px 8px; font-size:10px;">SCAN</button>
+<!-- Output Overlay -->
+<div id="om" class="popup-overlay">
+    <div class="popup-modal">
+        <div class="overlay-header"><span>Audio Output</span><button onclick="tg('om')" class="close-btn">&times;</button></div>
+        <div style="padding:12px;display:flex;flex-direction:column;gap:6px;">
+            <button class="ctrl-btn" style="border-radius:10px;width:100%;justify-content:flex-start;gap:12px;padding:10px 14px;" onclick="manualOut('jack')"><i class="fa-solid fa-headphones"></i> Line Out (3.5mm)</button>
+            <button class="ctrl-btn" style="border-radius:10px;width:100%;justify-content:flex-start;gap:12px;padding:10px 14px;" onclick="manualOut('hdmi')"><i class="fa-solid fa-tv"></i> HDMI Audio</button>
+            <button class="ctrl-btn" style="border-radius:10px;width:100%;justify-content:flex-start;gap:12px;padding:10px 14px;" onclick="openBtManager()"><i class="fa-brands fa-bluetooth-b"></i> Bluetooth</button>
+            <div id="bt-manager-panel" style="display:none;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="font-size:0.7rem;color:var(--text-dim);">DEVICES</span><button onclick="scanBt()" class="toolbar-btn">SCAN</button></div>
+                <div id="bt-list" class="scroll-list" style="height:120px;"></div>
+                <div id="bt-status" style="font-size:0.6rem;color:var(--primary);text-align:center;margin-top:4px;"></div>
             </div>
-            <div id="bt-list" class="playlist-scroll" style="height:120px; border:1px solid rgba(255,255,255,0.1); border-radius:6px; margin-bottom:10px;">
-                <div style="padding:10px; text-align:center; color:#666; font-size:12px;">Click Scan to search...</div>
-            </div>
-            <div id="bt-status" style="font-size:10px; color:var(--primary); text-align:center;"></div>
-        </div>
-        <div style="border-top: 1px solid rgba(255,255,255,0.1); margin: 10px 0;"></div>
-    </div>
-</div>
-
-<div id="tm" class="output-overlay-compact">
-    <div class="output-box">
-        <div class="output-header-small">
-            <span>Sleep Timer</span>
-            <button onclick="tg('tm')" class="close-icon">&times;</button>
-        </div>
-        <div class="output-options">
-            <button class="btn-out-compact" onclick="setTimer(15)">
-                <i class="fa-regular fa-clock"></i>
-                <div class="out-text"><strong>15 Min</strong><small>Sleep soon</small></div>
-            </button>
-            <button class="btn-out-compact" onclick="setTimer(30)">
-                <i class="fa-solid fa-clock"></i>
-                <div class="out-text"><strong>30 Min</strong><small>Standard</small></div>
-            </button>
-            <button class="btn-out-compact" onclick="setTimer(60)">
-                <i class="fa-solid fa-hourglass-half"></i>
-                <div class="out-text"><strong>1 Hour</strong><small>Long play</small></div>
-            </button>
-            <button class="btn-out-compact" onclick="setTimer(0)" style="border:1px solid #ff4444;">
-                <i class="fa-solid fa-ban" style="color:#ff4444;"></i>
-                <div class="out-text"><strong>Disable</strong><small>Turn off timer</small></div>
-            </button>
         </div>
     </div>
 </div>
 
-<div id="pr-om" class="output-overlay-compact">
-    <div class="output-box">
-        <div class="output-header-small">
-            <span>Equalizer Presets</span>
-            <button onclick="tg('pr-om')" class="close-icon">&times;</button>
+<!-- Timer Overlay -->
+<div id="tm" class="popup-overlay">
+    <div class="popup-modal">
+        <div class="overlay-header"><span>Sleep Timer</span><button onclick="tg('tm')" class="close-btn">&times;</button></div>
+        <div style="padding:12px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button onclick="setTimer(15)" class="ctrl-btn" style="flex:1;border-radius:10px;flex-direction:column;gap:4px;height:auto;padding:12px;"><i class="fa-regular fa-clock"></i><span>15m</span></button>
+            <button onclick="setTimer(30)" class="ctrl-btn" style="flex:1;border-radius:10px;flex-direction:column;gap:4px;height:auto;padding:12px;"><i class="fa-solid fa-clock"></i><span>30m</span></button>
+            <button onclick="setTimer(60)" class="ctrl-btn" style="flex:1;border-radius:10px;flex-direction:column;gap:4px;height:auto;padding:12px;"><i class="fa-solid fa-hourglass-half"></i><span>1h</span></button>
+            <button onclick="setTimer(0)" class="ctrl-btn" style="flex:1;border-radius:10px;flex-direction:column;gap:4px;height:auto;padding:12px;border:1px solid #ff4444;"><i class="fa-solid fa-ban" style="color:#ff4444;"></i><span>Off</span></button>
         </div>
-        <div id="preset-container" class="preset-grid-compact"></div>
     </div>
 </div>
 
-<div id="lym" class="overlay lyrics-overlay">
-    <div class="overlay-header" style="border-bottom:none;">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <h2 style="font-size:0.9rem; color:#ccc;">LYRICS</h2>
-            <button onclick="fetchLyrics()" style="background:none; border:none; color:var(--primary); cursor:pointer;">
-                <i class="fa-solid fa-rotate-right"></i>
-            </button>
-        </div>
+<!-- Presets Overlay -->
+<div id="pr-om" class="popup-overlay">
+    <div class="popup-modal">
+        <div class="overlay-header"><span>EQ Presets</span><button onclick="tg('pr-om')" class="close-btn">&times;</button></div>
+        <div id="preset-container" class="preset-grid"></div>
+    </div>
+</div>
+
+<!-- Lyrics Overlay -->
+<div id="lym" class="overlay" style="background:rgba(5,5,10,0.9);">
+    <div class="overlay-header" style="border:none;">
+        <div style="display:flex;align-items:center;gap:10px;"><h2 style="font-size:0.85rem;">LYRICS</h2><button onclick="fetchLyrics()" class="ctrl-btn" style="width:28px;height:28px;font-size:0.7rem;"><i class="fa-solid fa-rotate-right"></i></button></div>
         <button onclick="toggleLyrics()" class="close-btn">&times;</button>
     </div>
-    <div id="lyrics-container" class="lyrics-scroll">
-        <div id="lyric-placeholder" style="margin-top:50px; color:#888;">Fetching...</div>
+    <div id="lyrics-container" class="lyrics-scroll"><div style="margin-top:50px;color:#888;">Fetching...</div></div>
+</div>
+
+<!-- Search Popup -->
+<div id="search-popup" class="popup-overlay">
+    <div class="popup-modal">
+        <div class="overlay-header"><h3>Results</h3><button onclick="closeSearch()" class="close-btn">&times;</button></div>
+        <div id="popup-content" class="scroll-list" style="max-height:60vh;padding:8px;"></div>
     </div>
 </div>
 
-<div id="search-popup" class="search-overlay">
-    <div class="search-modal">
-        <div class="modal-header">
-            <h3>Search Results</h3>
-            <button onclick="closeSearch()" class="close-btn">&times;</button>
-        </div>
-        <div id="popup-content" class="modal-body"></div>
-    </div>
-</div>
-
-<script src="{{ url_for('static', filename='js/script.js') }}?v=FINAL_V12"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
 <script>
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}")
-                .then(reg => console.log('SW Registered!', reg.scope))
-                .catch(err => console.log('SW Fail:', err));
-        });
-    }
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}")
+            .then(reg => console.log('SW Registered', reg.scope))
+            .catch(err => console.log('SW Fail', err));
+    });
+}
 </script>
 </body>
 </html>

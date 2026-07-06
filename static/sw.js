@@ -1,5 +1,5 @@
-// OpenWrt Music Box - Service Worker with Cache-First Strategy
-const CACHE_NAME = 'openwrt-music-box-v1';
+// Owrt MusicBox - Service Worker with Cache-First Strategy
+const CACHE_NAME = 'owrt-musicbox-v1';
 const STATIC_ASSETS = [
   '/',
   '/static/css/all.min.css',

@@ -1,6 +1,5 @@
 // =========================================
-// OpenWrt Music Box - CORE LOGIC (FINAL V12 - FIXED & MERGED)
-// Status: ALL Features Working + Security Patch + Playlist Logic
+// Owrt-MusicBox - CORE LOGIC
 // =========================================
 
 // --- GLOBAL VARIABLES ---
@@ -29,14 +28,14 @@ let totalDuration = 0;   // Durasi total lagu
 // Settings
 let settings;
 try {
-    settings = JSON.parse(localStorage.getItem('owmb_set')) || getDefaultSettings();
+    settings = JSON.parse(localStorage.getItem('owrtmb_set')) || getDefaultSettings();
 } catch (e) {
     console.warn("Settings corrupted, resetting to default.");
     settings = getDefaultSettings();
 }
 
 let systemState = {
-    powerMode: localStorage.getItem('owmb_power') || 'portable'
+    powerMode: localStorage.getItem('owrtmb_power') || 'portable'
 };
 
 function getDefaultSettings() {
@@ -69,7 +68,7 @@ window.onload = () => {
         pb.addEventListener('touchend', () => isSeeking = false);
     }
     
-    if(localStorage.getItem('owmb_theme') === 'light') {
+    if(localStorage.getItem('owrtmb_theme') === 'light') {
         document.body.classList.add('light-theme');
     }
     
@@ -201,7 +200,7 @@ setInterval(() => {
         .then(d => {
             // Update Text Info
             setTextSafe('tit', d.title || "Ready");
-            setTextSafe('art', d.artist || "OpenWrt Music Box");
+            setTextSafe('art', d.artist || "Owrt-MusicBox");
             
             // Sync Waktu (Koreksi jika drift > 0.5 detik)
             if (Math.abs(globalTime - d.current_time) > 0.5) {
@@ -319,7 +318,7 @@ function fetchLyrics() {
             <span style="color:#fff; font-weight:bold;">${title}</span></p>
         </div>`;
     
-    if (title === "Ready" || title === "OpenWrt Music Box") {
+    if (title === "Ready" || title === "Owrt-MusicBox") {
         cont.innerHTML = '<div style="margin-top:50px;">Play music to see lyrics</div>';
         return;
     }
@@ -523,7 +522,7 @@ function updateUI() {
     const vV = document.getElementById('v-vol-val');
     if(vV) vV.textContent = settings.vol + '%';
     
-    localStorage.setItem('owmb_set', JSON.stringify(settings));
+    localStorage.setItem('owrtmb_set', JSON.stringify(settings));
 }
 
 function sendVol(v) {
@@ -542,7 +541,7 @@ function sendEq() {
 
 function setPowerMode(mode) {
     systemState.powerMode = mode;
-    localStorage.setItem('owmb_power', mode);
+    localStorage.setItem('owrtmb_power', mode);
     updatePowerUI(mode);
 
     fetch('/system/power_mode?mode=' + mode)
@@ -621,6 +620,12 @@ function sendBalance(l, r) {
     balTimeout = setTimeout(() => {
         fetch(`/control/balance?l=${l.toFixed(2)}&r=${r.toFixed(2)}`);
     }, 100);
+}
+
+// --- EQ TOGGLE ---
+function toggleEq() {
+    const section = document.getElementById('eq-section');
+    if(section) section.classList.toggle('collapsed');
 }
 
 // --- UTILITIES ---
@@ -1029,7 +1034,7 @@ async function deletePlItem(index) {
 function toggleTheme() {
     document.body.classList.toggle('light-theme');
     const isLight = document.body.classList.contains('light-theme');
-    localStorage.setItem('owmb_theme', isLight ? 'light' : 'dark');
+    localStorage.setItem('owrtmb_theme', isLight ? 'light' : 'dark');
 }
 
 // 5. PRESETS INIT

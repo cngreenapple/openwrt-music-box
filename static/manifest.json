@@ -1,10 +1,10 @@
 {
-  "name": "OpenWrt Music Box Pro",
-  "short_name": "OW Music Box",
+  "name": "Owrt-MusicBox",
+  "short_name": "OwrtBox",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#050505",
-  "theme_color": "#050505",
+  "background_color": "#0a0a0f",
+  "theme_color": "#00ff88",
   "orientation": "portrait",
   "icons": [
     {

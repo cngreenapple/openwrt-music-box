@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
 REQUIREMENTS="$SCRIPT_DIR/requirements.txt"
 ALL_OK=true
-OWMB_PORT=2030
+OWRTMB_PORT=2030
 
 echo ""
 echo -e "${CYAN}============================================${NC}"
@@ -276,23 +276,23 @@ DOCKERDNS
     
     log_info "Step 1/2: Building Docker image (this may take 5-15 minutes first time)..."
     echo ""
-    OWMB_PORT=$OWMB_PORT docker-compose build 2>&1
+    OWRTMB_PORT=$OWRTMB_PORT docker-compose build 2>&1
     BUILD_EXIT=$?
     
     if [ $BUILD_EXIT -ne 0 ]; then
         log_warn "Docker build had issues. Trying alternative DNS method..."
         # Fallback: build with --network host if DNS failed
-        docker build --network host -t openwrt-music-box . 2>&1
+        docker build --network host -t owrt-musicbox . 2>&1
         BUILD_EXIT=$?
     fi
     
     if [ $BUILD_EXIT -eq 0 ]; then
         echo ""
         log_ok "Build successful! Starting container..."
-        OWMB_PORT=$OWMB_PORT docker-compose up -d 2>&1
+        OWRTMB_PORT=$OWRTMB_PORT docker-compose up -d 2>&1
     else
         log_error "Docker build failed. Check Docker DNS configuration."
-        log_info "Try manual: cd $SCRIPT_DIR && OWMB_PORT=$OWMB_PORT docker-compose up -d --build"
+        log_info "Try manual: cd $SCRIPT_DIR && OWRTMB_PORT=$OWRTMB_PORT docker-compose up -d --build"
     fi
     
     # Tunggu container ready
@@ -300,7 +300,7 @@ DOCKERDNS
     log_info "Waiting for container to be ready..."
     for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
         sleep 2
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "openwrt-music-box"; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "owrt-musicbox"; then
             log_ok "Docker container is running!"
             SERVICE_STARTED=true
             break
@@ -328,22 +328,22 @@ if [ "$IS_OPENWRT" = true ] && [ -d /usr/lib/lua/luci ]; then
     echo -e "${YELLOW}---[+] OpenWrt LuCI Integration ---${NC}"
     
     # Buat controller
-    cat > /usr/lib/lua/luci/controller/openwrtmusicbox.lua << 'LUCI_CTRL'
-module("luci.controller.openwrtmusicbox", package.seeall)
+    cat > /usr/lib/lua/luci/controller/owrtmusicbox.lua << 'LUCI_CTRL'
+module("luci.controller.owrtmusicbox", package.seeall)
 function index()
-    entry({"admin", "openwrtmusicbox"}, template("openwrtmusicbox"), _("OpenWrt-Music-Box"), 90).leaf=true
+    entry({"admin", "owrtmusicbox"}, template("owrtmusicbox"), _("Owrt-MusicBox"), 90).leaf=true
 end
 LUCI_CTRL
     log_ok "Created LuCI controller"
     
     # Buat view
-    cat > /usr/lib/lua/luci/view/openwrtmusicbox.htm << 'LUCI_VIEW'
+    cat > /usr/lib/lua/luci/view/owrtmusicbox.htm << 'LUCI_VIEW'
 <%+header%>
 <div class="cbi-map">
-    <iframe id="owmb-player" style="width: 100%; min-height: 90vh; border: none; border-radius: 2px;"></iframe>
+    <iframe id="owrtmb-player" style="width: 100%; min-height: 90vh; border: none; border-radius: 2px;"></iframe>
 </div>
 <script type="text/javascript">
-    document.getElementById("owmb-player").src = window.location.protocol + "//" + window.location.hostname + ":2030";
+    document.getElementById("owrtmb-player").src = window.location.protocol + "//" + window.location.hostname + ":2030";
 </script>
 <%+footer%>
 LUCI_VIEW
@@ -366,21 +366,21 @@ SERVICE_ACTIVE=false
 
 # Cek via curl
 if command -v curl &>/dev/null; then
-    if curl -s http://localhost:$OWMB_PORT/status >/dev/null 2>&1; then
+    if curl -s http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1; then
         SERVICE_ACTIVE=true
     fi
 elif command -v wget &>/dev/null; then
-    if wget -q -O- http://localhost:$OWMB_PORT/status >/dev/null 2>&1; then
+    if wget -q -O- http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1; then
         SERVICE_ACTIVE=true
     fi
 fi
 
 if [ "$SERVICE_ACTIVE" = true ]; then
-    log_ok "Service is RUNNING on port $OWMB_PORT"
+    log_ok "Service is RUNNING on port $OWRTMB_PORT"
     
     # Coba dapatkan info
     if command -v curl &>/dev/null; then
-        STATUS_JSON=$(curl -s http://localhost:$OWMB_PORT/status 2>/dev/null)
+        STATUS_JSON=$(curl -s http://localhost:$OWRTMB_PORT/status 2>/dev/null)
         if [ -n "$STATUS_JSON" ]; then
             VERSION_INFO=$(echo "$STATUS_JSON" | grep -o '"title":"[^"]*"' | head -1)
             log_ok "Player status: $VERSION_INFO"
@@ -388,7 +388,7 @@ if [ "$SERVICE_ACTIVE" = true ]; then
     fi
 else
     if [ "$SERVICE_STARTED" = true ]; then
-        log_warn "Service may need a moment. Check with: curl http://localhost:$OWMB_PORT/status"
+        log_warn "Service may need a moment. Check with: curl http://localhost:$OWRTMB_PORT/status"
         if [ "$IS_OPENWRT" = true ]; then
             log_info "For Docker logs: docker logs -f openwrt-music-box"
         else
@@ -416,7 +416,7 @@ command -v yt-dlp >/dev/null && echo -e "  ✅ yt-dlp ($(yt-dlp --version 2>/dev
 echo ""
 
 if [ "$SERVICE_ACTIVE" = true ]; then
-    echo -e "  ${GREEN}✅ Service is RUNNING on port $OWMB_PORT${NC}"
+    echo -e "  ${GREEN}✅ Service is RUNNING on port $OWRTMB_PORT${NC}"
 else
     echo -e "  ${YELLOW}⚠️ Service status: not verified yet${NC}"
 fi
@@ -432,10 +432,10 @@ if [ -z "$LOCAL_IP" ]; then
 fi
 
 echo -e "${YELLOW}Access:${NC}"
-echo -e "  ${GREEN}🌐 Local:${NC}       http://localhost:$OWMB_PORT"
-echo -e "  ${GREEN}📡 Network:${NC}     http://$LOCAL_IP:$OWMB_PORT"
-if [ "$IS_OPENWRT" = true ] && [ -f /usr/lib/lua/luci/view/openwrtmusicbox.htm ]; then
-    echo -e "  ${GREEN}📋 LuCI:${NC}      Login ke panel LuCI → tab OpenWrt-Music-Box"
+    echo -e "  ${GREEN}🌐 Local:${NC}       http://localhost:$OWRTMB_PORT"
+    echo -e "  ${GREEN}📡 Network:${NC}     http://$LOCAL_IP:$OWRTMB_PORT"
+if [ "$IS_OPENWRT" = true ] && [ -f /usr/lib/lua/luci/view/owrtmusicbox.htm ]; then
+    echo -e "  ${GREEN}📋 LuCI:${NC}      Login ke panel LuCI → tab Owrt-MusicBox"
 fi
 echo ""
 
@@ -444,7 +444,7 @@ echo -e "${YELLOW}Quick Commands:${NC}"
 echo -e "  ./run.sh           # Start manually"
 echo -e "  tail -f $LOG_FILE  # View logs" 2>/dev/null
 if [ "$IS_OPENWRT" = true ] && [ "$HAS_MPV" != true ]; then
-    echo -e "  docker logs -f openwrt-music-box  # Docker logs"
+    echo -e "  docker logs -f owrt-musicbox  # Docker logs"
     echo -e "  docker-compose down               # Stop service"
     echo -e "  docker-compose up -d              # Start service"
 fi
@@ -454,5 +454,5 @@ if [ "$ALL_OK" = false ]; then
     echo -e "${YELLOW}⚠️  Some components had warnings (non-critical).${NC}"
 fi
 echo -e "${CYAN}============================================${NC}"
-echo -e "${GREEN}  🎵 OpenWrt-Music-Box is ready to rock! 🎵${NC}"
+echo -e "${GREEN}  🎵 Owrt-MusicBox is ready to rock! 🎵${NC}"
 echo -e "${CYAN}============================================${NC}"

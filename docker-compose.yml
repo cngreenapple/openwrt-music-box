@@ -1,11 +1,9 @@
 services:
-  openwrt-music-box:
+  owrt-musicbox:
     build:
       context: .
-      # Gunakan network host agar build container bisa resolve DNS via host
-      # (Di OpenWrt, build container default menggunakan bridge network yang tidak bisa resolve DNS)
       network: host
-    container_name: openwrt-music-box
+    container_name: owrt-musicbox
     restart: unless-stopped
     network_mode: host
     dns:
@@ -17,11 +15,11 @@ services:
       - /mnt:/mnt:ro
       - ./data:/app/data
     environment:
-      - OWMB_PORT=${OWMB_PORT:-2030}
-      - OWMB_HOST=${OWMB_HOST:-0.0.0.0}
-      - OWMB_DB_PATH=/app/data/music.db
-      - OWMB_LOG_LEVEL=${OWMB_LOG_LEVEL:-INFO}
-      - OWMB_DEFAULT_PATH=${OWMB_DEFAULT_PATH:-/root/music}
+      - OWRTMB_PORT=${OWRTMB_PORT:-2030}
+      - OWRTMB_HOST=${OWRTMB_HOST:-0.0.0.0}
+      - OWRTMB_DB_PATH=/app/data/music.db
+      - OWRTMB_LOG_LEVEL=${OWRTMB_LOG_LEVEL:-INFO}
+      - OWRTMB_DEFAULT_PATH=${OWRTMB_DEFAULT_PATH:-/root/music}
     devices:
       - /dev/snd
     cap_add:
