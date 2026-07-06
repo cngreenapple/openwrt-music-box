@@ -22,11 +22,21 @@ OpenWrt-Music-Box is a lightweight, Dockerized music player tailored specificall
 
 ## 🚀 One-Command Installation
 
-**Debian / Ubuntu / Alpine (with mpv):**
+**Satu perintah untuk SEMUA platform — install, start, & LuCI setup otomatis:**
+
 ```bash
 git clone https://github.com/cngreenapple/openwrt-music-box.git && cd openwrt-music-box && chmod +x install.sh && ./install.sh
 ```
-Akses di: **http://localhost:2030**
+
+Script akan **otomatis**:
+| Step | Aksi |
+|------|------|
+| 1-6 | Install semua dependencies & Python packages |
+| 7 | **Auto-start service** — Docker (OpenWrt) atau background (Debian/Alpine) |
+| 8 | **Auto-setup LuCI** — jika terdeteksi OpenWrt, langsung pasang tab di panel admin |
+| ✓ | **Verifikasi** — cek apakah service sudah running di port **2030** |
+
+Akses di: **http://localhost:2030** atau **http://<ip-router>:2030**
 
 ---
 
