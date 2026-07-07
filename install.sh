@@ -267,17 +267,30 @@ LUCI_VIEW
 fi
 
 # ============================================
-# VERIFIKASI
+# VERIFIKASI (dengan retry)
 # ============================================
 echo ""; echo -e "${YELLOW}---[✓] Verification ---${NC}"
-sleep 2
 
 SERVICE_ACTIVE=false
-if command -v curl &>/dev/null; then curl -s http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1 && SERVICE_ACTIVE=true
-elif command -v wget &>/dev/null; then wget -q -O- http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1 && SERVICE_ACTIVE=true
-fi
+for i in 1 2 3 4 5 6 7 8; do
+    sleep 2
+    if command -v curl &>/dev/null; then
+        curl -s http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1 && { SERVICE_ACTIVE=true; break; }
+    elif command -v wget &>/dev/null; then
+        wget -q -O- http://localhost:$OWRTMB_PORT/status >/dev/null 2>&1 && { SERVICE_ACTIVE=true; break; }
+    fi
+    log_info "Waiting for service... ($i/8)"
+done
 
-[ "$SERVICE_ACTIVE" = true ] && log_ok "Service RUNNING on port $OWRTMB_PORT" || log_warn "Service not verified. Try: curl http://localhost:$OWRTMB_PORT/status"
+# If still not active, check container logs
+if [ "$SERVICE_ACTIVE" = true ]; then
+    log_ok "Service RUNNING on port $OWRTMB_PORT"
+else
+    log_warn "Service not responding. Checking container logs..."
+    docker logs --tail 20 owrt-musicbox 2>/dev/null || true
+    log_info "Try: curl http://localhost:$OWRTMB_PORT/status"
+    log_info "Or: docker logs -f owrt-musicbox"
+fi
 
 # ============================================
 # SUMMARY
