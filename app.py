@@ -160,8 +160,7 @@ def metadata_worker():
     if not os.path.exists(COVER_DIR): os.makedirs(COVER_DIR, exist_ok=True)
     while True:
         try:
-            bt_mac, bt_name = get_connected_bt()
-            with state_lock: app_state["connected_bt_mac"] = bt_mac or ""; app_state["connected_bt_name"] = bt_name or ""
+            with state_lock: app_state["connected_bt_mac"] = (get_connected_bt() or ("",""))[0]; app_state["connected_bt_name"] = (get_connected_bt() or ("",""))[1]
             with state_lock:
                 target = app_state["sleep_target"]
                 if target > 0 and time.time() >= target:
@@ -180,17 +179,9 @@ def metadata_worker():
                     mpv_send(["set_property", "volume", saved_vol]); update_mpv_filters()
                 is_eof = mpv_send(["get_property", "eof-reached"])
                 is_idle = mpv_send(["get_property", "idle-active"])
-                with state_lock:
-                    cm = app_state.get("manual_stop", False)
-                    cs = app_state.get("status", "stopped")
-                if cm and is_idle:
-                    with state_lock:
-                        app_state["manual_stop"] = False
-                elif is_eof is True or (is_idle is True and cs == "playing"):
-                    play_next()
-                    time.sleep(1)
-                    continue
-                # Metadata extract
+                with state_lock: cm = app_state.get("manual_stop", False); cs = app_state.get("status", "stopped")
+                if cm and is_idle: with state_lock: app_state["manual_stop"] = False
+                elif is_eof is True or (is_idle is True and cs == "playing"): play_next(); time.sleep(1); continue
                 queue_title = "Unknown Title"
                 with state_lock:
                     if app_state["queue"] and app_state["current_index"] < len(app_state["queue"]):
@@ -215,7 +206,6 @@ def metadata_worker():
                 for dk, dv in meta.items():
                     kl = dk.lower()
                     if kl == "album": album = dv
-                    elif kl in ("genre","artist"): pass
                     elif kl in ("date","year","original_date"): year = dv[:4] if dv else ""
                 codec = (mpv_send(["get_property","audio-codec-name"]) or "UNK").upper()
                 br = mpv_send(["get_property","audio-bitrate"])
@@ -242,13 +232,9 @@ def metadata_worker():
                     if vol is not None: app_state["volume"] = vol
             else:
                 idle_counter += 1
-                if idle_counter == 5:
-                    with state_lock:
-                        app_state["status"] = "stopped"
-                with state_lock:
-                    ist = app_state["status"]
-                if idle_counter == 15 and ist != "stopped":
-                    play_next()
+                if idle_counter == 5: with state_lock: app_state["status"] = "stopped"
+                with state_lock: ist = app_state["status"]
+                if idle_counter == 15 and ist != "stopped": play_next()
         except Exception as e: logger.error(f"metadata_worker error: {e}")
         time.sleep(1)
 
@@ -261,17 +247,12 @@ def youtube_extract(url):
     """Extract audio stream URL from YouTube using yt-dlp."""
     try:
         import yt_dlp
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True, 'no_warnings': True,
-            'extract_flat': False, 'skip_download': True,
-        }
+        ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'no_warnings': True, 'extract_flat': False, 'skip_download': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Unknown')
             thumbnail = info.get('thumbnail', '')
             duration = info.get('duration', 0)
-            # Get best audio-only format URL
             audio_url = ""
             formats = info.get('formats', [])
             audio_only = [f for f in formats if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
@@ -280,24 +261,12 @@ def youtube_extract(url):
                 audio_url = audio_only[0].get('url', '')
             if not audio_url:
                 for f in formats:
-                    if f.get('url') and f.get('acodec') != 'none':
-                        audio_url = f['url']
-                        break
-            if not audio_url:
-                audio_url = info.get('url', '')
+                    if f.get('url') and f.get('acodec') != 'none': audio_url = f['url']; break
+            if not audio_url: audio_url = info.get('url', '')
             return {'audio_url': audio_url, 'title': title, 'thumbnail': thumbnail, 'duration': duration}
-    except ImportError:
-        # Fallback: subprocess yt-dlp
-        try:
-            import subprocess
-            result = subprocess.run(['yt-dlp', '-f', 'bestaudio', '--get-url', url], capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                audio_url = result.stdout.strip()
-                return {'audio_url': audio_url, 'title': '', 'thumbnail': '', 'duration': 0}
-        except: pass
     except Exception as e:
         logger.error(f"youtube_extract error: {e}")
-    return {'error': 'Failed to extract audio URL'}
+        return {'error': str(e)}
 
 # ========================
 # ROUTES
@@ -319,13 +288,10 @@ def status():
 
 @app.route('/youtube_audio')
 def youtube_audio():
-    """Extract and proxy YouTube audio stream."""
     url = request.args.get('url', '')
     if not url: return jsonify({"error": "no url"}), 400
     result = youtube_extract(url)
-    if 'error' in result:
-        return jsonify(result), 500
-    # Get title & thumb for state
+    if 'error' in result: return jsonify(result), 500
     with state_lock:
         app_state["title"] = result.get('title', 'YouTube Audio')
         app_state["thumb"] = result.get('thumbnail', '')
@@ -333,30 +299,78 @@ def youtube_audio():
         app_state["status"] = "playing"
         app_state["total_time"] = result.get('duration', 0)
     audio_url = result.get('audio_url', '')
-    if not audio_url:
-        return jsonify({"error": "no audio url"}), 500
-    # Redirect to the actual audio stream
-    # For CORS issues, we can proxy, but redirect is simpler
+    if not audio_url: return jsonify({"error": "no audio url"}), 500
     return jsonify({"audio_url": audio_url, "title": result['title'], "thumbnail": result.get('thumbnail', '')})
 
 @app.route('/youtube_proxy')
 def youtube_proxy():
-    """Proxy YouTube audio stream through this server."""
     url = request.args.get('url', '')
     if not url: return jsonify({"error": "no url"}), 400
     result = youtube_extract(url)
-    if 'error' in result or not result.get('audio_url'):
-        return jsonify({"error": "failed to extract"}), 500
-    audio_url = result['audio_url']
-    # Proxy the stream
+    if 'error' in result or not result.get('audio_url'): return jsonify({"error": "failed to extract"}), 500
     try:
-        req = requests.get(audio_url, stream=True, timeout=10)
-        def generate():
-            for chunk in req.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        return Response(generate(), content_type='audio/webm', status=req.status_code)
+        req = requests.get(result['audio_url'], stream=True, timeout=10)
+        return Response(req.iter_content(chunk_size=8192), content_type='audio/webm', status=req.status_code)
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+@app.route('/youtube_playlist')
+def youtube_playlist():
+    """Extract all tracks from a YouTube playlist/mix and add to queue."""
+    url = request.args.get('url', '')
+    if not url: return jsonify({"error": "no url"}), 400
+    try:
+        import yt_dlp
+        ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'no_warnings': True, 'extract_flat': True, 'skip_download': True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            entries = info.get('entries', [])
+            tracks = []
+            for entry in entries:
+                if entry:
+                    video_id = entry.get('id', '')
+                    title = entry.get('title', 'Unknown')
+                    if video_id:
+                        link = f"https://music.youtube.com/watch?v={video_id}"
+                        tracks.append({'link': link, 'title': title})
+            if not tracks: return jsonify({"error": "no tracks found"}), 404
+            with state_lock:
+                app_state["queue"].extend(tracks)
+                if app_state["status"] == "stopped" and len(app_state["queue"]) > 0:
+                    app_state["current_index"] = len(app_state["queue"]) - len(tracks)
+                    threading.Thread(target=trigger_server_play, args=(tracks[0]['link'],)).start()
+            return jsonify({"status": "ok", "count": len(tracks), "playlist_title": info.get('title', 'Playlist')})
     except Exception as e:
+        logger.error(f"youtube_playlist error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/youtube_artist')
+def youtube_artist():
+    """Search songs by artist/band name and add to queue."""
+    artist = request.args.get('name', '').strip()
+    limit = int(request.args.get('limit', 15))
+    if not artist: return jsonify({"error": "no artist name"}), 400
+    try:
+        # Search for songs by this artist
+        results = yt_music.search(artist, filter="songs", limit=limit)
+        if not results:
+            results = yt_music.search(artist, filter="videos", limit=limit)
+        tracks = []
+        for r in results:
+            vid = r.get('videoId', '')
+            if vid:
+                title = r.get('title', 'Unknown')
+                artists = ", ".join([a['name'] for a in r.get('artists', [])])
+                full_title = f"{artists} - {title}" if artists else title
+                tracks.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
+        if not tracks: return jsonify({"error": "no songs found"}), 404
+        with state_lock:
+            app_state["queue"].extend(tracks)
+            if app_state["status"] == "stopped" and len(app_state["queue"]) > 0:
+                app_state["current_index"] = len(app_state["queue"]) - len(tracks)
+                threading.Thread(target=trigger_server_play, args=(tracks[0]['link'],)).start()
+        return jsonify({"status": "ok", "count": len(tracks), "artist": artist})
+    except Exception as e:
+        logger.error(f"youtube_artist error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/stream')
@@ -407,8 +421,7 @@ def get_lyrics():
 @app.route('/bt/scan')
 def bt_scan():
     try:
-        subprocess.run("bluetoothctl scan off", shell=True)
-        subprocess.run("bluetoothctl power on", shell=True)
+        subprocess.run("bluetoothctl scan off", shell=True); subprocess.run("bluetoothctl power on", shell=True)
         subprocess.run("timeout 10s bluetoothctl scan on", shell=True)
         out = subprocess.check_output("bluetoothctl devices", shell=True).decode()
         devs = []
@@ -423,14 +436,12 @@ def bt_connect():
     mac = request.args.get('mac')
     if not mac: return jsonify({"status":"error"})
     try:
-        subprocess.run("pgrep bluealsa || bluealsa &", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1)
+        subprocess.run("pgrep bluealsa || bluealsa &", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(1)
         subprocess.run("bluetoothctl agent on", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run("bluetoothctl default-agent", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["bluetoothctl","pair",mac], timeout=15, check=False)
         subprocess.run(["bluetoothctl","trust",mac], check=False)
-        subprocess.run(["bluetoothctl","connect",mac], timeout=10, check=False)
-        time.sleep(2)
+        subprocess.run(["bluetoothctl","connect",mac], timeout=10, check=False); time.sleep(2)
         info = subprocess.check_output(f"bluetoothctl info {mac}", shell=True, text=True)
         if "Connected: yes" in info:
             m = re.search(r"Name:\s+(.*)", info)
@@ -491,22 +502,16 @@ def play():
     with state_lock:
         if mode == 'play_now':
             app_state["queue"] = [{'link':url, 'title':title}]
-            app_state["current_index"] = 0
-            app_state["error_count"] = 0
+            app_state["current_index"] = 0; app_state["error_count"] = 0
             if app_state["play_mode"] == "browser":
-                # Browser mode — for YouTube, we'll extract in frontend
-                app_state["status"] = "playing"
-                app_state["title"] = title
-            else:
-                threading.Thread(target=trigger_server_play, args=(url,)).start()
+                app_state["status"] = "playing"; app_state["title"] = title
+            else: threading.Thread(target=trigger_server_play, args=(url,)).start()
         elif mode == 'enqueue':
             app_state["queue"].append({'link':url, 'title':title})
             if app_state["status"]=="stopped" and len(app_state["queue"])==1:
                 app_state["current_index"]=0
-                if app_state["play_mode"] == "browser":
-                    app_state["status"] = "playing"; app_state["title"] = title
-                else:
-                    threading.Thread(target=trigger_server_play, args=(url,)).start()
+                if app_state["play_mode"] == "browser": app_state["status"] = "playing"; app_state["title"] = title
+                else: threading.Thread(target=trigger_server_play, args=(url,)).start()
     return jsonify({"status":"ok","mode":mode,"queue_len":len(app_state["queue"])})
 
 @app.route('/play/mode')
@@ -667,9 +672,7 @@ def set_balance():
 def scan_library():
     if lib_mgr:
         p = "/root/music"
-        if os.path.exists("default_path.txt"):
-            try: p = open("default_path.txt").read().strip()
-            except: pass
+        if os.path.exists("default_path.txt"): p = open("default_path.txt").read().strip()
         lib_mgr.scan_directory(p)
         return jsonify({"status":"started","path":p})
     return jsonify({"status":"disabled"})
@@ -709,10 +712,8 @@ def upload_file():
     if ext not in AUDIO_EXTS: return jsonify({"error":"unsupported format"}),400
     uid = str(uuid.uuid4())[:8]
     safe_name = f"{uid}_{f.filename}"
-    save_path = os.path.join(UPLOAD_DIR, safe_name)
-    f.save(save_path)
-    logger.info(f"Uploaded: {safe_name}")
-    return jsonify({"status":"ok","filename":safe_name,"path":save_path})
+    f.save(os.path.join(UPLOAD_DIR, safe_name))
+    return jsonify({"status":"ok","filename":safe_name,"path":os.path.join(UPLOAD_DIR, safe_name)})
 
 @app.route('/uploads')
 def list_uploads():
@@ -726,9 +727,7 @@ def list_uploads():
 
 @app.route('/save_playlist', methods=['POST'])
 def save_playlist():
-    try:
-        json.dump(request.json, open(PLAYLIST_FILE,'w'))
-        return jsonify({"status":"ok"})
+    try: json.dump(request.json, open(PLAYLIST_FILE,'w')); return jsonify({"status":"ok"})
     except: return jsonify({"error":"failed"}),500
 
 if __name__ == '__main__':
