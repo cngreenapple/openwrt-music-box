@@ -39,7 +39,7 @@ window.onload = () => {
         });
     }
     if(localStorage.getItem('owrtmb_theme') === 'light') document.body.classList.add('light');
-    startLoop(); setInterval(pollStatus, 1000);
+    startLoop(); setInterval(() => { pollStatus(); updateMiniQueue(); }, 1000);
     const bs = document.getElementById('balanceSlider');
     if(bs) bs.addEventListener('input', () => updateBalance(parseInt(bs.value)));
     
@@ -287,8 +287,8 @@ function showToast(msg) {
 function tg(id) {
     const el = document.getElementById(id); if(!el) return;
     const isAct = el.classList.contains('active') || el.classList.contains('show');
-    if(isAct) { el.classList.remove('active','show'); }
-    else { el.style.display='flex'; void el.offsetWidth; el.classList.add(id==='search-popup'?'show':'active'); if(id==='pm') initPath(); if(id==='pr-om') initPresets(); }
+    if(isAct) { el.classList.remove('active','show'); if(el.style.display) el.style.display='none'; }
+    else { el.style.display='flex'; void el.offsetWidth; el.classList.add('active'); if(id==='pm') initPath(); if(id==='pr-om') initPresets(); }
 }
 
 function toggleQuickMenu() {
@@ -419,6 +419,36 @@ async function loadLibraryDB() {
 function filterLibraryLocal(q) {
     const ql=q.toLowerCase();
     document.querySelectorAll('#lib-list .lib-item').forEach(r => { r.style.display=(r.dataset.meta||'').includes(ql)?'flex':'none'; });
+}
+
+// === Mini Queue (Dashboard) ===
+function updateMiniQueue() {
+    const mq = document.getElementById('mini-queue');
+    const mql = document.getElementById('mini-queue-list');
+    if(!mq || !mql) return;
+    fetch('/queue/list').then(r=>r.json()).then(d => {
+        if(d.queue.length > 1 && d.current_index >= 0) {
+            mq.style.display = 'block';
+            mql.innerHTML = '';
+            // Show next 3 items after current
+            const start = d.current_index + 1;
+            for(let i = start; i < Math.min(start + 3, d.queue.length); i++) {
+                const item = d.queue[i];
+                const div = document.createElement('div');
+                div.style.cssText = 'font-size:0.6rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                div.textContent = (i+1) + '. ' + item.title;
+                mql.appendChild(div);
+            }
+            if(start + 3 < d.queue.length) {
+                const more = document.createElement('div');
+                more.style.cssText = 'font-size:0.55rem;color:#555;';
+                more.textContent = '+' + (d.queue.length - start - 3) + ' more';
+                mql.appendChild(more);
+            }
+        } else {
+            mq.style.display = 'none';
+        }
+    }).catch(()=>{});
 }
 
 // === Queue ===

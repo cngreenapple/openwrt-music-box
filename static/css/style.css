@@ -255,6 +255,7 @@ h3#art { font-size: 0.85rem; color: var(--accent); margin:0; font-weight: 500; w
     background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
     display: none; align-items: center; justify-content: center;
 }
+.popup.active { display: flex; }
 .popup.show { display: flex; }
 .popup-box {
     width: 88%; max-width: 360px; background: #151518;
