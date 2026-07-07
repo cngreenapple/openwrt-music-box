@@ -302,6 +302,18 @@ def youtube_audio():
     if not audio_url: return jsonify({"error": "no audio url"}), 500
     return jsonify({"audio_url": audio_url, "title": result['title'], "thumbnail": result.get('thumbnail', '')})
 
+@app.route('/radio_proxy')
+def radio_proxy():
+    """Proxy radio stream to avoid CORS/mixed content issues."""
+    url = request.args.get('url', '')
+    if not url: return jsonify({"error": "no url"}), 400
+    try:
+        req = requests.get(url, stream=True, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        ct = req.headers.get('Content-Type', 'audio/mpeg')
+        return Response(req.iter_content(chunk_size=8192), content_type=ct, status=req.status_code)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/youtube_proxy')
 def youtube_proxy():
     url = request.args.get('url', '')

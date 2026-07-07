@@ -105,13 +105,16 @@ function updateMuteBtn() {
 // ====== RADIO ======
 function playRadio(url) {
     if(!url) return; tg('radio');
+    // Always use browser mode for radio streams (via proxy to avoid CORS)
+    if(systemState.playMode === 'server') setPlayMode('browser');
     if(browserAudio) {
-        browserAudio.src = url;
+        browserAudio.src = '/radio_proxy?url=' + encodeURIComponent(url);
         browserAudio.volume = (settings.vol || 50) / 100;
-        browserAudio.play().catch(() => {});
+        browserAudio.play().catch((e) => { showToast('Radio: '+e.message); });
         document.body.classList.add('playing'); isPlaying = true; updatePlayBtn();
-        setText('tit', 'Radio Stream'); setText('art', url.substring(0, 40) + '...'); setText('tech-specs', 'STREAMING');
+        setText('tit', 'Radio Stream'); setText('art', 'Live Stream'); setText('tech-specs', 'STREAMING');
     }
+    updateModeIndicator();
 }
 
 // ====== LOOP ======
@@ -169,14 +172,27 @@ function togglePlay() {
 }
 function updatePlayBtn() { const btn = document.getElementById('pi'); if(btn) btn.className = isPlaying ? 'fa-solid fa-pause' : 'fa-solid fa-play'; }
 
-// ====== MODE ======
+// ====== MODE & INDICATOR ======
+function updateModeIndicator() {
+    const mi = document.getElementById('mode-indicator');
+    if(!mi) return;
+    const isServer = systemState.playMode === 'server';
+    mi.innerHTML = isServer ? '<i class="fa-solid fa-server"></i> Device Mode' : '<i class="fa-solid fa-desktop"></i> Browser Mode';
+    mi.style.color = isServer ? 'var(--accent)' : 'var(--dim)';
+}
+
+function setPlayMode(mode) {
+    systemState.playMode = mode; localStorage.setItem('owrtmb_playmode', mode);
+    document.getElementById('mode-device').classList.toggle('active', mode === 'server');
+    document.getElementById('mode-browser').classList.toggle('active', mode === 'browser');
+    fetch('/play/mode?mode=' + mode);
+    if(mode === 'browser' && browserAudio) browserAudio.pause();
+    updateModeIndicator();
+}
+
 function togglePlayMode() {
     const newMode = systemState.playMode === 'server' ? 'browser' : 'server';
-    systemState.playMode = newMode; localStorage.setItem('owrtmb_playmode', newMode);
-    document.getElementById('mode-device').classList.toggle('active', newMode === 'server');
-    document.getElementById('mode-browser').classList.toggle('active', newMode === 'browser');
-    fetch('/play/mode?mode=' + newMode);
-    if(newMode === 'browser' && browserAudio) browserAudio.pause();
+    setPlayMode(newMode);
     showToast('Mode: ' + (newMode === 'server' ? 'Device (MPV)' : 'Browser'));
 }
 
