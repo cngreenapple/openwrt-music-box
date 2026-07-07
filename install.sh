@@ -151,82 +151,48 @@ for pkg, label in pkgs.items():
 " 2>/dev/null
 
 # ============================================
-# STEP 5: yt-dlp (Dengan Mirror + Fallback)
+# STEP 5: yt-dlp (Python Library + Binary)
 # ============================================
-echo ""; echo -e "${YELLOW}---[5/6] yt-dlp (YouTube Downloader) ---${NC}"
+echo ""; echo -e "${YELLOW}---[5/6] yt-dlp (YouTube) ---${NC}"
 
+# 1. Install Python library yt-dlp (PALING PENTING untuk play.sh)
+log_info "Installing yt-dlp Python library..."
+$PIP_CMD install --upgrade yt-dlp 2>&1 | tail -1 || true
+
+# 2. Verifikasi Python library
+if python3 -c "import yt_dlp" 2>/dev/null; then
+    log_ok "yt-dlp Python library ready"
+else
+    log_warn "yt-dlp Python library failed to install"
+fi
+
+# 3. Coba download binary juga sebagai fallback
 YTDLP_BIN="/usr/local/bin/yt-dlp"
-YTDLP_INSTALLED=false
-
-# Cek apakah sudah ada
-if command -v yt-dlp &>/dev/null; then
-    log_ok "yt-dlp already: v$(yt-dlp --version 2>/dev/null || echo 'OK')"
-    YTDLP_INSTALLED=true
+if ! command -v yt-dlp &>/dev/null; then
+    log_info "Mencoba download yt-dlp binary..."
+    download_ytdlp() {
+        local url="$1"; local dest="$2"
+        if command -v curl &>/dev/null; then
+            run_cmd curl -sL --connect-timeout 15 --max-time 60 "$url" -o "$dest" 2>/dev/null && return 0
+        fi
+        if command -v wget &>/dev/null; then
+            run_cmd wget -q --timeout=30 "$url" -O "$dest" 2>/dev/null && return 0
+        fi
+        return 1
+    }
+    for url in "https://cdn.jsdelivr.net/gh/yt-dlp/yt-dlp@master/yt-dlp/yt-dlp" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "https://hub.fastgit.xyz/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"; do
+        if download_ytdlp "$url" "$YTDLP_BIN"; then
+            chmod a+rx "$YTDLP_BIN" 2>/dev/null
+            if command -v yt-dlp &>/dev/null; then log_ok "yt-dlp binary installed"; break; fi
+        fi
+    done
 fi
 
-# Coba download dari berbagai source
-download_ytdlp() {
-    local url="$1"; local dest="$2"
-    if command -v curl &>/dev/null; then
-        run_cmd curl -sL --connect-timeout 15 --max-time 60 "$url" -o "$dest" 2>/dev/null && return 0
-    fi
-    if command -v wget &>/dev/null; then
-        run_cmd wget -q --timeout=30 "$url" -O "$dest" 2>/dev/null && return 0
-    fi
-    return 1
-}
-
-if [ "$YTDLP_INSTALLED" = false ]; then
-    log_info "Mencoba download yt-dlp..."
-    
-    # Mirror 1: jsDelivr CDN (cepat)
-    log_info "  [1/4] jsDelivr CDN..."
-    if download_ytdlp "https://cdn.jsdelivr.net/gh/yt-dlp/yt-dlp@master/yt-dlp/yt-dlp" "$YTDLP_BIN"; then
-        chmod a+rx "$YTDLP_BIN"
-        if command -v yt-dlp &>/dev/null; then log_ok "yt-dlp via CDN"; YTDLP_INSTALLED=true; fi
-    fi
-    
-    # Mirror 2: GitHub (official)
-    if [ "$YTDLP_INSTALLED" = false ]; then
-        log_info "  [2/4] GitHub releases..."
-        if download_ytdlp "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$YTDLP_BIN"; then
-            chmod a+rx "$YTDLP_BIN"
-            if command -v yt-dlp &>/dev/null; then log_ok "yt-dlp via GitHub"; YTDLP_INSTALLED=true; fi
-        fi
-    fi
-    
-    # Mirror 3: GitHub mirror (fastgit)
-    if [ "$YTDLP_INSTALLED" = false ]; then
-        log_info "  [3/4] FastGit mirror..."
-        if download_ytdlp "https://hub.fastgit.xyz/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$YTDLP_BIN"; then
-            chmod a+rx "$YTDLP_BIN"
-            if command -v yt-dlp &>/dev/null; then log_ok "yt-dlp via FastGit"; YTDLP_INSTALLED=true; fi
-        fi
-    fi
-    
-    # Fallback: pip install yt-dlp
-    if [ "$YTDLP_INSTALLED" = false ]; then
-        log_info "  [4/4] pip install yt-dlp..."
-        $PIP_CMD install yt-dlp 2>&1 | tail -1 || true
-        if command -v yt-dlp &>/dev/null; then log_ok "yt-dlp via pip"; YTDLP_INSTALLED=true; fi
-    fi
-    
-    # Final: copy ke /usr/local/bin jika di-install via pip
-    if command -v yt-dlp &>/dev/null && [ ! -f "$YTDLP_BIN" ]; then
-        cp "$(which yt-dlp)" "$YTDLP_BIN" 2>/dev/null || true
-    fi
-    
-    if [ "$YTDLP_INSTALLED" = false ]; then
-        log_warn "yt-dlp gagal di semua mirror. YouTube playback mungkin tidak berfungsi."
-        log_warn "Install manual: pip3 install yt-dlp"
-    fi
-fi
-
-# Simpan yt-dlp di folder project juga sebagai backup
+# 4. Simpan binary di project/bin/
 if command -v yt-dlp &>/dev/null && [ ! -f "$SCRIPT_DIR/bin/yt-dlp" ]; then
     mkdir -p "$SCRIPT_DIR/bin"
     cp "$(which yt-dlp)" "$SCRIPT_DIR/bin/yt-dlp" 2>/dev/null || true
-    log_ok "yt-dlp dicopy ke project/bin/"
+    log_ok "yt-dlp copied to project/bin/"
 fi
 
 # ============================================

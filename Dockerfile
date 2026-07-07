@@ -32,12 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     socat \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    # yt-dlp: coba download binary dulu, fallback pip
+    # yt-dlp: install Python library via pip (most reliable)
+    && pip install --no-cache-dir yt-dlp \
+    # Also download binary as fallback
     && { curl -sL --connect-timeout 10 https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp 2>/dev/null \
          && chmod a+rx /usr/local/bin/yt-dlp \
-         || echo "yt-dlp binary download failed, will use pip fallback"; } \
-    && { command -v yt-dlp || pip install --no-cache-dir yt-dlp; } \
-    && chmod a+rx /usr/local/bin/yt-dlp 2>/dev/null || true
+         || true; }
 
 WORKDIR /app
 
