@@ -9,14 +9,18 @@
     <link rel="apple-touch-icon" href="/static/img/icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="stylesheet" href="/static/css/all.min.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=4">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
     <link rel="shortcut icon" href="/static/img/favicon.ico">
 </head>
 <body>
 <audio id="browser-audio" preload="auto"></audio>
+<canvas id="eq-visualizer" style="display:none;position:fixed;bottom:0;left:0;width:100%;height:60px;z-index:50;pointer-events:none;opacity:0.3;"></canvas>
 <div class="bg-layer"></div>
 
-<div class="player-card">
+<div class="player-card" id="drop-zone">
+    <!-- Drop overlay -->
+    <div id="drop-overlay" style="display:none;position:absolute;inset:0;z-index:999;background:rgba(0,255,0,0.1);border:3px dashed var(--accent);border-radius:20px;align-items:center;justify-content:center;font-size:1.2rem;color:var(--accent);font-weight:700;backdrop-filter:blur(10px);">Drop audio files here</div>
+    
     <!-- Header -->
     <div class="header">
         <span class="brand" onclick="toggleTheme()">OwrtBox</span>
@@ -36,6 +40,7 @@
                 <button class="btn-ico" id="btn-timer" onclick="tg('tm')" style="position:relative;"><i class="fa-solid fa-stopwatch"></i><span id="timer-badge" class="badge-dot" style="display:none;"></span></button>
                 <button class="btn-ico" onclick="toggleLyrics()" id="btn-lyrics"><i class="fa-solid fa-microphone-lines"></i></button>
                 <button class="btn-ico" onclick="openLibrary()"><i class="fa-solid fa-list-ul"></i></button>
+                <button class="btn-ico" onclick="tg('radio')" id="btn-radio"><i class="fa-solid fa-tower-broadcast"></i></button>
             </div>
         </div>
     </div>
@@ -72,14 +77,21 @@
 
     <!-- Controls -->
     <div class="ctl-row">
-        <button class="ctl sm" id="btn-shuf" onclick="ctl('shuffle')"><i class="fa-solid fa-shuffle"></i></button>
-        <button class="ctl" onclick="ctl('prev')"><i class="fa-solid fa-backward-step"></i></button>
-        <button class="ctl play-btn" id="btn-play" onclick="togglePlay()"><i class="fa-solid fa-play" id="pi"></i></button>
-        <button class="ctl" onclick="ctl('next')"><i class="fa-solid fa-forward-step"></i></button>
-        <button class="ctl sm" id="btn-loop" onclick="ctl('loop')"><i class="fa-solid fa-repeat"></i></button>
+        <button class="ctl sm" id="btn-shuf" onclick="ctl('shuffle')" title="Shuffle"><i class="fa-solid fa-shuffle"></i></button>
+        <button class="ctl" onclick="ctl('prev')" title="Previous" aria-label="Previous track"><i class="fa-solid fa-backward-step"></i></button>
+        <button class="ctl play-btn" id="btn-play" onclick="togglePlay()" aria-label="Play/Pause"><i class="fa-solid fa-play" id="pi"></i></button>
+        <button class="ctl" onclick="ctl('next')" title="Next" aria-label="Next track"><i class="fa-solid fa-forward-step"></i></button>
+        <button class="ctl sm" onclick="ctl('stop')" title="Stop"><i class="fa-solid fa-stop"></i></button>
     </div>
 
-    <!-- EQ + Volume + Balance -->
+    <!-- Volume + Mute + Balance -->
+    <div class="vol-bal-row" style="display:flex;align-items:center;gap:8px;flex-shrink:0;padding:2px 0;">
+        <button class="btn-ico" id="btn-mute" onclick="toggleMute()" title="Mute" style="width:28px;height:28px;font-size:0.8rem;"><i class="fa-solid fa-volume-high"></i></button>
+        <input type="range" id="vol-slider" min="0" max="100" value="50" style="flex:1;height:3px;appearance:none;background:#1a1a1a;border-radius:3px;outline:none;">
+        <span id="vol-val" style="color:var(--accent);font-size:0.7rem;min-width:24px;text-align:right;">50</span>
+    </div>
+
+    <!-- EQ + Balance -->
     <div class="eq-section" id="eq-section">
         <div class="eq-header" onclick="toggleEq()">
             <span>EQUALIZER</span>
@@ -98,14 +110,10 @@
             <div class="knob-wrap"><div class="knob sm" id="k-f10" data-type="f10"></div><label>Air</label></div>
         </div>
         <div class="vol-bal-row">
-            <div class="vol-section">
-                <div class="knob lg" id="k-vol" data-type="vol"></div>
-                <span id="v-vol-val">50%</span>
-            </div>
-            <div class="bal-section">
-                <span>L</span>
-                <input type="range" id="balanceSlider" min="-100" max="100" value="0" step="5">
-                <span>R</span>
+            <div class="vol-section" style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:0.5rem;color:var(--dim);">L</span>
+                <input type="range" id="balanceSlider" min="-100" max="100" value="0" step="5" style="flex:1;height:3px;appearance:none;background:#1a1a1a;border-radius:3px;outline:none;">
+                <span style="font-size:0.5rem;color:var(--dim);">R</span>
             </div>
         </div>
     </div>
@@ -116,6 +124,24 @@
             <input id="searchInput" class="search-input" placeholder="Search or paste URL..." autocomplete="off">
             <button type="submit" class="search-btn"><i class="fa-solid fa-magnifying-glass"></i></button>
         </form>
+    </div>
+</div>
+
+<!-- Radio Popup -->
+<div id="radio" class="popup">
+    <div class="popup-box">
+        <div class="overlay-hdr"><span>Radio Stations</span><button onclick="tg('radio')" class="close-btn">&times;</button></div>
+        <div id="radio-list" style="padding:12px;max-height:40vh;overflow-y:auto;">
+            <div class="menu-item" onclick="playRadio('http://stream-uk1.radioparadise.com/aac-128')"><i class="fa-solid fa-tower-broadcast"></i><span>Radio Paradise (AAC)</span></div>
+            <div class="menu-item" onclick="playRadio('http://ice1.somafm.com/groovesalad-128-mp3')"><i class="fa-solid fa-tower-broadcast"></i><span>SomaFM Groove Salad</span></div>
+            <div class="menu-item" onclick="playRadio('http://ice1.somafm.com/defcon-256-mp3')"><i class="fa-solid fa-tower-broadcast"></i><span>SomaFM DEF CON Radio</span></div>
+            <div class="menu-item" onclick="playRadio('http://stream.live.vc.bbcmedia.co.uk/bbc_world_service')"><i class="fa-solid fa-tower-broadcast"></i><span>BBC World Service</span></div>
+            <div class="menu-item" onclick="playRadio('http://ice1.somafm.com:80/spacestation-128-mp3')"><i class="fa-solid fa-tower-broadcast"></i><span>Space Station Soma</span></div>
+        </div>
+        <div style="padding:0 12px 12px;">
+            <input id="radio-url" class="search-input" placeholder="Or paste stream URL..." style="border-radius:17px;">
+            <button onclick="playRadio(document.getElementById('radio-url').value)" class="tb-btn" style="margin-top:4px;width:100%;">Play</button>
+        </div>
     </div>
 </div>
 
@@ -209,7 +235,7 @@
     </div>
 </div>
 
-<script src="/static/js/script.js?v=4"></script>
+<script src="/static/js/script.js?v=5"></script>
 <script>if('serviceWorker'in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
 </body>
 </html>
