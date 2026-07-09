@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file, Response, abort
+from flask import Flask, render_template, request, jsonify, send_file, Response, abort, redirect
 import uuid
 import subprocess
 import json
@@ -956,6 +956,139 @@ def list_uploads():
             if os.path.isfile(fp) and fn.lower().endswith(AUDIO_EXTS):
                 files.append({"name":fn, "path":fp, "size":os.path.getsize(fp)})
     return jsonify(files)
+
+# ========================
+# PLAYLIST EXPORT/IMPORT (M3U)
+# ========================
+
+@app.route('/playlist/export_m3u')
+def export_m3u():
+    """Export current queue as M3U file."""
+    from io import StringIO
+    with state_lock:
+        if not app_state["queue"]:
+            return jsonify({"error": "empty queue"}), 404
+        lines = ["#EXTM3U"]
+        for item in app_state["queue"]:
+            lines.append(f"#EXTINF:-1,{item['title']}")
+            lines.append(item['link'])
+        content = "\n".join(lines)
+        return Response(content, mimetype='audio/x-mpegurl',
+                        headers={'Content-Disposition': 'attachment; filename=playlist.m3u'})
+
+@app.route('/playlist/import_m3u', methods=['POST'])
+def import_m3u():
+    """Import M3U/M3U8/PLS playlist."""
+    try:
+        text = request.get_data(as_text=True)
+        if not text:
+            return jsonify({"status": "error", "info": "empty"}), 400
+
+        lines = text.strip().split('\n')
+        imported = 0
+        with state_lock:
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#') or line.startswith('['):
+                    continue
+                # Check if it looks like a URL or file path
+                if line.startswith('http') or os.path.exists(line):
+                    # Try to extract title from previous EXTINF line
+                    title = "Unknown"
+                    app_state["queue"].append({'link': line, 'title': title})
+                    imported += 1
+            if imported > 0 and app_state["status"] == "stopped":
+                app_state["current_index"] = 0
+
+        return jsonify({"status": "ok", "imported": imported})
+    except Exception as e:
+        return jsonify({"status": "error", "info": str(e)}), 500
+
+# ========================
+# BROWSER MODE: YouTube audio extraction & proxy
+# ========================
+
+@app.route('/youtube_audio')
+def youtube_audio():
+    """Resolve a YouTube URL to its audio stream URL via yt-dlp."""
+    url = request.args.get('url', '')
+    if not url: return jsonify({"error": "no url"}), 400
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            audio_url = info.get('url', '')
+            title = info.get('title', 'Unknown')
+            thumbnail = info.get('thumbnail', '')
+            return jsonify({
+                'audio_url': audio_url,
+                'title': title,
+                'thumbnail': thumbnail
+            })
+    except Exception as e:
+        logger.error(f"youtube_audio error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/youtube_proxy')
+def youtube_proxy():
+    """Proxy YouTube audio stream to avoid CORS issues in browser."""
+    url = request.args.get('url', '')
+    if not url: return abort(404)
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            audio_url = info.get('url', '')
+            if not audio_url:
+                return abort(404)
+            # Redirect to the actual audio stream URL
+            return redirect(audio_url)
+    except Exception as e:
+        logger.error(f"youtube_proxy error: {e}")
+        # Fallback: try direct streaming
+        try:
+            import yt_dlp
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'quiet': True,
+                'no_warnings': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                audio_url = info.get('url', '')
+                if audio_url:
+                    # Stream directly through Flask
+                    resp = requests.get(audio_url, stream=True)
+                    return Response(resp.iter_content(chunk_size=8192), 
+                                    content_type=resp.headers.get('content-type', 'audio/webm'),
+                                    status=resp.status_code)
+        except Exception as e2:
+            logger.error(f"youtube_proxy fallback error: {e2}")
+        return abort(500)
+
+@app.route('/radio_proxy')
+def radio_proxy():
+    """Proxy radio streams to avoid CORS issues in browser."""
+    url = request.args.get('url', '')
+    if not url: return abort(404)
+    try:
+        resp = requests.get(url, stream=True, timeout=10)
+        return Response(resp.iter_content(chunk_size=8192),
+                        content_type=resp.headers.get('content-type', 'audio/mpeg'),
+                        status=resp.status_code)
+    except Exception as e:
+        logger.error(f"radio_proxy error: {e}")
+        return abort(502)
 
 if __name__ == '__main__':
     import subprocess

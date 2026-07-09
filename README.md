@@ -15,7 +15,7 @@ OpenWrt-Music-Box is a lightweight, Dockerized music player tailored specificall
 * ☁️ **YouTube Music & Lyrics API:** Integrated with `ytmusicapi` for cloud streaming and `LRCLIB` for real-time synced lyrics.
 * 🐳 **Fully Dockerized:** Runs in an isolated, lightweight Debian container, keeping your OpenWrt host perfectly clean.
 * 🎚️ **10-Band Equalizer + Crossfeed:** Built-in parametric EQ with 16 presets and binaural crossfeed for headphones.
-* 🌐 **Browser Play Mode:** Stream audio directly in your browser without server-side playback.
+* 🌐 **Browser Play Mode:** Stream audio directly in your browser without server-side playback. Supports YouTube, local files, radio streams, and uploaded audio.
 * 📁 **File Upload:** Upload audio files via the Web UI for instant playback.
 * 📱 **PWA Ready:** Install as a Progressive Web App on your phone for a native-like experience.
 
@@ -262,6 +262,24 @@ rm -rf /tmp/luci-*
 
 ### 📱 PWA
 - Open in browser → Add to Home Screen for a native app-like experience.
+
+---
+
+## 🌐 Browser Play Mode Details
+
+When switching to **Browser Mode** (click the server/browser toggle in the header), audio streams directly to your web browser instead of playing through MPV on the server. This mode uses the following API endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /youtube_audio?url=` | Resolves a YouTube URL to its direct audio stream URL via yt-dlp (JSON response) |
+| `GET /youtube_proxy?url=` | Proxies YouTube audio stream to the browser (avoids CORS issues) |
+| `GET /radio_proxy?url=` | Proxies internet radio streams to the browser |
+| `GET /stream?path=` | Streams local audio files with HTTP Range support |
+| `POST /upload` | Upload audio files for instant playback |
+| `GET /playlist/export_m3u` | Export queue as M3U playlist file |
+| `POST /playlist/import_m3u` | Import M3U/M3U8/PLS playlist files |
+
+> **Note:** Browser mode for YouTube requires `yt-dlp` (already included in `requirements.txt`). For radio streams, `requests` library is used as a proxy.
 
 ---
 
