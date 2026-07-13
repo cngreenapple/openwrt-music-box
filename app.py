@@ -155,13 +155,6 @@ def extract_local_cover(filepath):
 
 def trigger_play(url):
     global needs_restore
-    # In browser mode, don't start mpv - frontend handles playback via HTML5/WebAudio
-    with state_lock:
-        if app_state.get("play_mode") == "browser":
-            app_state["last_play_time"] = time.time()
-            app_state["status"] = "playing"
-            app_state["manual_stop"] = False
-            return
     if os.path.exists(PLAY_SCRIPT):
         with state_lock:
             app_state["last_play_time"] = time.time()
@@ -242,13 +235,6 @@ def metadata_worker():
                     app_state["queue"] = []
                     app_state["current_index"] = -1
                     threading.Thread(target=mpv_send, args=(["stop"],)).start()
-
-            # In browser mode, skip all mpv metadata polling
-            with state_lock:
-                is_browser = app_state.get("play_mode") == "browser"
-            if is_browser:
-                time.sleep(1)
-                continue
 
             mpv_ready = False
             try:
@@ -661,6 +647,59 @@ def play_current():
             s = app_state["queue"][idx]
             return jsonify({"index": idx, "title": s['title'], "link": s['link'], "thumb": app_state["thumb"]})
         return jsonify({"index": -1})
+
+@app.route('/browser_play', methods=['GET', 'POST'])
+def browser_play():
+    """Browser mode play - update queue WITHOUT triggering mpv."""
+    url = request.args.get('url') or request.form.get('link')
+    mode = request.args.get('mode', 'play_now')
+    title = request.args.get('title', 'Unknown Title')
+    if not url: return jsonify({"error": "no url"})
+    song_obj = {'link': url, 'title': title}
+
+    with state_lock:
+        if mode == 'play_now':
+            # For local files, scan directory like /play does
+            if os.path.exists(url) and os.path.isfile(url):
+                folder_path = os.path.dirname(url)
+                try:
+                    folder_files = [f for f in os.listdir(folder_path) if f.lower().endswith(AUDIO_EXTS)]
+                    folder_files.sort(key=lambda x: x.lower())
+                    new_queue = []
+                    target_index = 0
+                    for idx, fname in enumerate(folder_files):
+                        full_path = os.path.join(folder_path, fname)
+                        new_queue.append({'link': full_path, 'title': fname})
+                        if full_path == url: target_index = idx
+                    app_state["queue"] = new_queue
+                    app_state["current_index"] = target_index
+                except:
+                    app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+            elif "youtube.com" in url or "youtu.be" in url:
+                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                try:
+                    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
+                    video_id = match.group(1) if match else None
+                    if video_id:
+                        data = yt_music.get_watch_playlist(videoId=video_id, limit=20)
+                        if 'tracks' in data:
+                            new_queue = []
+                            for t in data['tracks']:
+                                vid = t.get('videoId')
+                                if vid:
+                                    t_artist = t['artists'][0]['name'] if 'artists' in t and t['artists'] else ""
+                                    full_title = f"{t_artist} - {t['title']}" if t_artist else t['title']
+                                    new_queue.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
+                            if new_queue: app_state["queue"] = new_queue; app_state["current_index"] = 0
+                except: pass
+            else:
+                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+            
+            app_state["error_count"] = 0
+            app_state["status"] = "playing"
+        elif mode == 'enqueue':
+            app_state["queue"].append(song_obj)
+    return jsonify({"status": "ok", "mode": mode, "queue_len": len(app_state["queue"])})
 
 @app.route('/play/next_browser')
 def next_browser():

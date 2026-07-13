@@ -401,7 +401,7 @@ function ctl(action) {
             else {
                 fetch('/play/current').then(r => r.json()).then(cur => {
                     if (cur.index > 0) {
-                        fetch('/play?url=' + encodeURIComponent(cur.link) + '&mode=play_now&title=' + encodeURIComponent(cur.title));
+                        fetch('/browser_play?url=' + encodeURIComponent(cur.link) + '&mode=play_now&title=' + encodeURIComponent(cur.title));
                         setTimeout(() => {
                             fetch('/play/current').then(r2 => r2.json()).then(prev => {
                                 if (prev.index >= 0 && prev.link) {
@@ -449,7 +449,9 @@ function searchYt(e) {
 function closeSearch() { document.getElementById('search-popup').classList.remove('show'); }
 
 function playSong(url, mode = 'play_now', title = '') {
-    fetch(`/play?url=${encodeURIComponent(url)}&mode=${mode}&title=${encodeURIComponent(title)}`).then(r => r.json()).then(d => {
+    // Browser mode: use /browser_play (no mpv). Server mode: use /play (starts mpv)
+    const endpoint = systemState.playMode === 'browser' ? '/browser_play' : '/play';
+    fetch(`${endpoint}?url=${encodeURIComponent(url)}&mode=${mode}&title=${encodeURIComponent(title)}`).then(r => r.json()).then(d => {
         if(mode === 'play_now') {
             document.body.classList.add('playing'); showToast('▶ ' + (title || 'Track'));
             if(systemState.playMode === 'browser') {
