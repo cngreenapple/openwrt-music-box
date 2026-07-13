@@ -243,7 +243,19 @@ function playBrowserAudio(src, title) {
     // Just changing the src is safe - no need to re-create anything
     browserAudio.src = src;
     browserAudio.volume = (settings.vol || 50) / 100;
-    setText('tit', title || 'Unknown');
+    
+    // Set display info: parse "Artist - Title" format
+    let displayTitle = title || 'Unknown';
+    let displayArtist = 'Playing';
+    if (displayTitle.includes(' - ')) {
+        const parts = displayTitle.split(' - ');
+        displayArtist = parts[0].trim();
+        displayTitle = parts[1].trim();
+    }
+    setText('tit', displayTitle);
+    setText('art', displayArtist);
+    setText('tech-specs', 'STREAMING');
+    
     document.body.classList.add('playing');
     isPlaying = true;
     updatePlayBtn();
