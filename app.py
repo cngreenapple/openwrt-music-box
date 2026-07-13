@@ -378,11 +378,15 @@ def metadata_worker():
                     val_vol = mpv_send(["get_property", "volume"])
                     if val_vol is not None: app_state["volume"] = val_vol
             else:
-                idle_counter += 1
-                if idle_counter == 5:
-                    with state_lock: app_state["status"] = "stopped"
-                if idle_counter == 15 and app_state["status"] != "stopped":
-                    play_next_in_queue()
+                # Don't count idle time when we're intentionally loading a new track
+                if app_state.get("status") == "loading":
+                    idle_counter = 0
+                else:
+                    idle_counter += 1
+                    if idle_counter == 5:
+                        with state_lock: app_state["status"] = "stopped"
+                    if idle_counter == 15 and app_state["status"] != "stopped":
+                        play_next_in_queue()
 
         except Exception as e:
             logger.error(f"metadata_worker error: {e}")

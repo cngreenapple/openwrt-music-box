@@ -34,18 +34,23 @@ sleep 0.5
 MPV_BIN=$(which mpv)
 if [ -z "$MPV_BIN" ]; then MPV_BIN="/usr/bin/mpv"; fi
 
-AUDIO_DEVICE="alsa/plughw:0,0"
+AUDIO_DEVICE=""
 if [ -f "$MODE_FILE" ]; then
-    READ_MODE=$(cat "$MODE_FILE")
+    READ_MODE=$(cat "$MODE_FILE" | tr -d '\n\r')
     if [[ "$READ_MODE" != "" ]]; then
         AUDIO_DEVICE="$READ_MODE"
     fi
-    if [[ "$READ_MODE" == *"plughw"* ]]; then
-        if [[ "$READ_MODE" == *"hdmi"* || "$READ_MODE" == *"2,0"* ]]; then
-             AUDIO_DEVICE="alsa/plughw:2,0"
-        else
-             AUDIO_DEVICE="alsa/plughw:0,0"
-        fi
+fi
+
+# Only apply hardware-specific overrides if MODE_FILE is not set or is empty
+if [ -z "$AUDIO_DEVICE" ]; then
+    # Auto-detect best audio device
+    if aplay -l 2>/dev/null | grep -q "card 1"; then
+        AUDIO_DEVICE="alsa/plughw:1,2"
+    elif aplay -l 2>/dev/null | grep -q "card 0"; then
+        AUDIO_DEVICE="alsa/plughw:0,0"
+    else
+        AUDIO_DEVICE="alsa/default"
     fi
 fi
 
