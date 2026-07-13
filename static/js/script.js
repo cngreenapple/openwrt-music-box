@@ -1,8 +1,9 @@
-// OwrtBox Player - COREv6 (Browser Mode + WebAudio + Mini Queue)
+// OwrtBox Player - COREv7 (Autoplay Fix + Volume Sync + Reliable Next)
 let browserAudio = null, isSeeking = false, currentLyricIndex = -1;
 let lastFrameTime = performance.now(), globalTime = 0, isPlaying = false, totalDuration = 0;
 let activeKnob = null, activeKnobRect = null, volTimer = null, eqTimer = null, balTimeout = null;
 let lyricsData = [], lyricsType = '', lastLyricsTitle = '', isMuted = false;
+let audioResolve = null; // track pending play promise for autoplay handling
 
 // WebAudio for browser mode EQ + Balance
 let audioCtx = null, sourceNode = null, gainNode = null, pannerNode = null;
@@ -23,6 +24,8 @@ function initWebAudio() {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         gainNode = audioCtx.createGain();
         pannerNode = audioCtx.createStereoPanner();
+        // Set initial volume
+        gainNode.gain.value = (settings.vol || 50) / 100;
         gainNode.connect(pannerNode);
         pannerNode.connect(audioCtx.destination);
         
@@ -55,7 +58,6 @@ function connectBrowserAudioToWebAudio() {
         if (sourceNode) sourceNode.disconnect();
         sourceNode = audioCtx.createMediaElementSource(browserAudio);
         sourceNode.connect(gainNode);
-        // Reconnect chain: source -> gain -> filters -> panner -> destination
     } catch(e) { /* already connected or not supported */ }
 }
 
@@ -69,7 +71,6 @@ function updateWebAudioEQ() {
 
 function updateWebAudioBalance(val) {
     if (!pannerNode) return;
-    // val from -100 to 100, convert to -1 to 1 for StereoPanner
     pannerNode.pan.value = val / 100;
 }
 
@@ -88,7 +89,6 @@ window.onload = () => {
         browserAudio.addEventListener('play', () => { 
             if (!audioCtx) initWebAudio();
             connectBrowserAudioToWebAudio();
-            // Resume AudioContext if suspended (browser autoplay policy)
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
         });
     }
@@ -122,11 +122,11 @@ window.onload = () => {
     const vs = document.getElementById('vol-slider');
     if(vs) {
         vs.value = settings.vol || 50;
-        document.getElementById('vol-val').textContent = settings.vol || 50;
+        document.getElementById('vol-val').textContent = (settings.vol || 50) + '%';
         vs.addEventListener('input', () => {
             const v = parseInt(vs.value);
             settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
-            document.getElementById('vol-val').textContent = v;
+            document.getElementById('vol-val').textContent = v + '%';
             if(systemState.playMode === 'browser') {
                 if(browserAudio) browserAudio.volume = v / 100;
                 updateWebAudioVolume(v);
@@ -157,7 +157,7 @@ function changeVol(delta) {
     const v = Math.max(0, Math.min(100, (settings.vol || 0) + delta));
     settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
     document.getElementById('vol-slider').value = v;
-    document.getElementById('vol-val').textContent = v;
+    document.getElementById('vol-val').textContent = v + '%';
     if(systemState.playMode === 'browser') {
         if(browserAudio) browserAudio.volume = v / 100;
         updateWebAudioVolume(v);
@@ -190,11 +190,20 @@ function playRadio(url) {
         if (!audioCtx) initWebAudio();
         browserAudio.src = '/radio_proxy?url=' + encodeURIComponent(url);
         browserAudio.volume = (settings.vol || 50) / 100;
-        browserAudio.play().catch((e) => { showToast('Radio: '+e.message); });
+        audioResolve = browserAudio.play();
+        if (audioResolve) audioResolve.catch(() => {
+            showToast('Click to play (autoplay blocked)');
+            document.addEventListener('click', resumeAudio, { once: true });
+        });
         document.body.classList.add('playing'); isPlaying = true; updatePlayBtn();
         setText('tit', 'Radio Stream'); setText('art', 'Live Stream'); setText('tech-specs', 'STREAMING');
     }
     updateModeIndicator();
+}
+function resumeAudio() {
+    if (browserAudio && browserAudio.paused && browserAudio.src) {
+        browserAudio.play().catch(() => {});
+    }
 }
 
 // ====== LOOP ======
@@ -238,7 +247,14 @@ function playBrowserTrack(url, title) {
         browserAudio.src = '/stream?path=' + encodeURIComponent(url);
     }
     browserAudio.volume = (settings.vol || 50) / 100;
-    browserAudio.play().catch(() => {});
+    // Handle autoplay policy - save promise for catch
+    const playPromise = browserAudio.play();
+    if (playPromise) {
+        playPromise.catch(() => {
+            showToast('Tap play to resume');
+            document.addEventListener('click', resumeAudio, { once: true });
+        });
+    }
     fetch('/play/current').then(r => r.json()).then(d => { if(d.thumb) document.getElementById('cover-img').src = d.thumb; });
     updateMiniQueue();
 }
@@ -316,11 +332,9 @@ function updateUI() {
 function sendEq() {
     if(eqTimer) clearTimeout(eqTimer);
     eqTimer = setTimeout(() => {
-        // Apply EQ to WebAudio for browser mode
         if (systemState.playMode === 'browser') {
             updateWebAudioEQ();
         }
-        // Always send to server for mpv mode
         let q = []; for(let i = 1; i <= 10; i++) q.push('f' + i + '=' + (settings['f' + i] || 0));
         fetch('/control/eq?' + q.join('&'));
     }, 100);
@@ -333,18 +347,18 @@ function ctl(action) {
         if(systemState.playMode === 'browser') { 
             if(globalTime > 3) { globalTime = 0; if(browserAudio) browserAudio.currentTime = 0; } 
             else { 
-                // Previous track in browser mode
-                fetch('/play/current').then(r => r.json()).then(d => {
+                // Previous track in browser mode: jump and play directly
+                fetch('/play/current').then(r => r.json()).then(cur => {
                     fetch('/queue/list').then(r => r.json()).then(qd => {
-                        if (d.index > 0) {
-                            const prevIdx = d.index - 1;
-                            fetch('/control/jump?index=' + prevIdx).then(() => {
-                                setTimeout(() => {
-                                    fetch('/play/current').then(r => r.json()).then(p => {
-                                        if(p.link) playBrowserTrack(p.link, p.title);
-                                    });
-                                }, 200);
-                            });
+                        if (cur.index > 0) {
+                            const prevIdx = cur.index - 1;
+                            const prevSong = qd.queue[prevIdx];
+                            if (prevSong) {
+                                // Play immediately without waiting for jump endpoint
+                                playBrowserTrack(prevSong.link, prevSong.title);
+                                // Update backend index
+                                fetch('/play?url=' + encodeURIComponent(prevSong.link) + '&mode=play_now&title=' + encodeURIComponent(prevSong.title));
+                            }
                         }
                     });
                 });
@@ -386,10 +400,8 @@ function playSong(url, mode = 'play_now', title = '') {
         if(mode === 'play_now') {
             document.body.classList.add('playing'); showToast('▶ ' + (title || 'Track'));
             if(systemState.playMode === 'browser') {
-                // Browser mode: use HTML5 audio (no mpv involvement)
-                setTimeout(() => fetch('/play/current').then(r => r.json()).then(p => { 
-                    if(p.link) playBrowserTrack(p.link, p.title); 
-                }), 300);
+                // Browser mode: play directly from the URL, no mpv
+                playBrowserTrack(url, title);
             } else { 
                 isPlaying = true; updatePlayBtn(); 
             }
@@ -406,13 +418,13 @@ function pollStatus() {
         setText('art', d.artist || 'OwrtBox');
         setText('tech-specs', d.tech_info || 'AWAITING SIGNAL');
 
-        // SYNC VOLUME SLIDER from server (for server mode)
+        // SYNC VOLUME SLIDER from server (for server mode) - only if not muted
         const vs = document.getElementById('vol-slider');
-        if(vs && d.volume !== undefined) {
+        if(vs && d.volume !== undefined && systemState.playMode !== 'browser') {
             const sv = parseInt(d.volume);
             if(!isMuted && vs.value != sv) {
                 vs.value = sv;
-                document.getElementById('vol-val').textContent = sv;
+                document.getElementById('vol-val').textContent = sv + '%';
                 settings.vol = sv;
             }
         }
@@ -448,7 +460,6 @@ function pollStatus() {
         if(ci && d.thumb && ci.src !== d.thumb) ci.src = d.thumb;
         else if(ci && !d.thumb && !ci.src.includes('default.png')) ci.src = '/static/img/default.png';
         
-        // Update mini queue on every poll
         updateMiniQueue();
     }).catch(() => {});
 }
@@ -498,7 +509,6 @@ function updateBalance(val) {
     let l = 1.0, r = 1.0; 
     if(val < 0) r = 1 - (Math.abs(val) / 100); 
     else if(val > 0) l = 1 - (val / 100);
-    // Apply balance via WebAudio for browser mode
     if (systemState.playMode === 'browser') {
         updateWebAudioBalance(val);
     }
@@ -588,7 +598,6 @@ async function loadLibraryDB() {
 }
 function filterLibraryLocal(q) { const ql = q.toLowerCase(); document.querySelectorAll('#lib-list .lib-item').forEach(r => { r.style.display = (r.dataset.meta || '').includes(ql) ? 'flex' : 'none'; }); }
 
-// ====== MINI QUEUE ======
 // ====== PLAYLIST POPUP (Dashboard) ======
 function togglePlaylistPopup() {
     const popup = document.getElementById('pl-popup');
@@ -635,19 +644,14 @@ function initPlaylistPopup() {
             row.appendChild(info);
             
             row.onclick = () => {
+                togglePlaylistPopup();
                 if (systemState.playMode === 'browser') {
-                    fetch('/control/jump?index=' + i).then(() => {
-                        setTimeout(() => {
-                            fetch('/play/current').then(r => r.json()).then(p => {
-                                if (p.link) playBrowserTrack(p.link, p.title);
-                            });
-                        }, 200);
-                        showToast('Jump: ' + item.title);
-                    });
+                    // Play directly from the queue item in browser mode
+                    playBrowserTrack(item.link, item.title);
+                    fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
                 } else {
                     fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
                 }
-                togglePlaylistPopup();
             };
             container.appendChild(row);
         });
@@ -656,6 +660,7 @@ function initPlaylistPopup() {
     });
 }
 
+// ====== MINI QUEUE ======
 function updateMiniQueue() {
     const mq = document.getElementById('mini-queue'); const mql = document.getElementById('mini-queue-list');
     if(!mq || !mql) return;
@@ -668,7 +673,14 @@ function updateMiniQueue() {
                 const item = d.queue[i]; const div = document.createElement('div');
                 div.style.cssText = 'font-size:0.6rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding:1px 0;';
                 div.textContent = (i + 1) + '. ' + item.title;
-                div.onclick = () => { fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title)); };
+                div.onclick = () => {
+                    if (systemState.playMode === 'browser') {
+                        playBrowserTrack(item.link, item.title);
+                        fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
+                    } else {
+                        fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
+                    }
+                };
                 mql.appendChild(div);
             }
             if(start + maxShow < d.queue.length) { 
@@ -691,7 +703,14 @@ async function loadQueue() {
             const n = document.createElement('div'); n.className = 'lib-name'; n.textContent = item.title;
             if(i === d.current_index) n.style.color = 'var(--accent)';
             info.appendChild(n); r.appendChild(info);
-            r.onclick = () => { fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title)); };
+            r.onclick = () => { 
+                if (systemState.playMode === 'browser') {
+                    playBrowserTrack(item.link, item.title);
+                    fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
+                } else {
+                    fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
+                }
+            };
             l.appendChild(r);
         });
     } catch(e) {}
@@ -709,7 +728,6 @@ function initPresets() {
             fetch('/control/preset?name=' + n).then(r => r.json()).then(d => { 
                 for(let k in d) settings[k] = d[k]; 
                 updateUI(); 
-                // Apply EQ to WebAudio for browser mode
                 if (systemState.playMode === 'browser') updateWebAudioEQ();
                 tg('pr-om'); showToast('EQ: ' + n); 
             });
@@ -748,3 +766,17 @@ function loadSavedPlaylists() {
 async function deletePlItem(idx) { const list = await (await fetch('/get_playlist')).json(); list.splice(idx, 1); await fetch('/save_playlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) }); loadSavedPlaylists(); showToast('Deleted'); }
 function exportM3U() { window.location.href = '/playlist/export_m3u'; showToast('Exporting...'); }
 function importM3U(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async(ev) => { const r = await fetch('/playlist/import_m3u', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: ev.target.result }); const d = await r.json(); if(d.status === 'ok') { showToast('Imported ' + d.imported); loadQueue(); } }; reader.readAsText(file); }
+
+// ====== VOLUME INIT (no knob, only slider) ======
+function initVol() {
+    const vs = document.getElementById('vol-slider');
+    if(!vs) return;
+    // Set initial value
+    settings.vol = settings.vol || 50;
+    vs.value = settings.vol;
+    document.getElementById('vol-val').textContent = settings.vol + '%';
+    if(systemState.playMode === 'browser') {
+        if(browserAudio) browserAudio.volume = settings.vol / 100;
+        updateWebAudioVolume(settings.vol);
+    }
+}
