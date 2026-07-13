@@ -1,9 +1,13 @@
-// OwrtBox Player - COREv8 (Stable Playback - No WebAudio)
+// OwrtBox Player - COREv9 (WebAudio Restored - One-time init)
 let browserAudio = null, isSeeking = false, currentLyricIndex = -1;
 let lastFrameTime = performance.now(), globalTime = 0, isPlaying = false, totalDuration = 0;
 let activeKnob = null, activeKnobRect = null, volTimer = null, eqTimer = null, balTimeout = null;
 let lyricsData = [], lyricsType = '', lastLyricsTitle = '', isMuted = false;
-let pendingPlay = false; // prevent double-play
+let audioInitialized = false; // prevent double WebAudio init
+
+// WebAudio (initialized ONCE)
+let audioCtx = null, sourceNode = null, gainNode = null, pannerNode = null;
+let eqFilters = [];
 
 let settings;
 try { settings = JSON.parse(localStorage.getItem('owrtmb_set')) || getDefaults(); }
@@ -13,6 +17,79 @@ let systemState = { powerMode: localStorage.getItem('owrtmb_power') || 'portable
 
 function getDefaults() { return { f1:0,f2:0,f3:0,f4:0,f5:0,f6:0,f7:0,f8:0,f9:0,f10:0, vol:50, active_preset:'Normal' }; }
 
+// ====== WEB AUDIO (ONE-TIME INIT) ======
+function initWebAudioOnce() {
+    if (audioInitialized || !browserAudio) return;
+    audioInitialized = true;
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create source from audio element - ONLY ONCE!
+        sourceNode = audioCtx.createMediaElementSource(browserAudio);
+        
+        // Gain for volume
+        gainNode = audioCtx.createGain();
+        gainNode.gain.value = (settings.vol || 50) / 100;
+        
+        // Panner for balance
+        pannerNode = audioCtx.createStereoPanner();
+        pannerNode.pan.value = 0; // center
+        
+        // Create 10-band EQ filters
+        const freqs = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+        eqFilters = [];
+        for (let i = 0; i < 10; i++) {
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'peaking';
+            filter.frequency.value = freqs[i];
+            filter.Q.value = 1.0;
+            filter.gain.value = settings['f' + (i+1)] || 0;
+            eqFilters.push(filter);
+        }
+        
+        // Connect chain: source -> gain -> filters -> panner -> destination
+        sourceNode.connect(gainNode);
+        if (eqFilters.length > 0) {
+            gainNode.connect(eqFilters[0]);
+            for (let i = 0; i < eqFilters.length - 1; i++) {
+                eqFilters[i].connect(eqFilters[i + 1]);
+            }
+            eqFilters[eqFilters.length - 1].connect(pannerNode);
+        } else {
+            gainNode.connect(pannerNode);
+        }
+        pannerNode.connect(audioCtx.destination);
+        
+        // Resume AudioContext if suspended (autoplay policy)
+        if (audioCtx.state === 'suspended') {
+            document.addEventListener('click', () => {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }, { once: true });
+        }
+    } catch(e) {
+        console.log("WebAudio not supported:", e);
+        audioInitialized = false;
+    }
+}
+
+function updateWebAudioEQ() {
+    if (!audioCtx || eqFilters.length === 0) return;
+    for (let i = 0; i < 10; i++) {
+        const val = settings['f' + (i+1)] || 0;
+        eqFilters[i].gain.value = val;
+    }
+}
+
+function updateWebAudioBalance(val) {
+    if (!pannerNode) return;
+    pannerNode.pan.value = val / 100;
+}
+
+function updateWebAudioVolume(v) {
+    if (!gainNode) return;
+    gainNode.gain.value = v / 100;
+}
+
 // ====== INIT ======
 window.onload = () => {
     browserAudio = document.getElementById('browser-audio');
@@ -20,11 +97,20 @@ window.onload = () => {
         browserAudio.addEventListener('timeupdate', onBrowserTime);
         browserAudio.addEventListener('ended', onBrowserEnd);
         browserAudio.addEventListener('loadedmetadata', () => { totalDuration = browserAudio.duration; });
-        // Handle errors in audio loading
         browserAudio.addEventListener('error', function() {
             const err = this.error ? this.error.message : 'unknown';
             showToast('Audio error: ' + err);
         });
+        // Init WebAudio once on first user interaction
+        document.addEventListener('click', initWebAudioOnce, { once: true });
+        // Also init on first play
+        browserAudio.addEventListener('play', () => {
+            if (!audioInitialized) {
+                initWebAudioOnce();
+            } else if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }, { once: true });
     }
 
     updateUI(); setupKnobs(); checkBitPerfect(); checkCrossfeed(); initPath();
@@ -59,8 +145,10 @@ window.onload = () => {
             const v = parseInt(vs.value);
             settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
             document.getElementById('vol-val').textContent = v + '%';
-            if(systemState.playMode === 'browser' && browserAudio) browserAudio.volume = v / 100;
-            else fetch('/control/volume?val=' + v);
+            if(systemState.playMode === 'browser') {
+                if(browserAudio) browserAudio.volume = v / 100;
+                updateWebAudioVolume(v);
+            } else fetch('/control/volume?val=' + v);
         });
     }
 
@@ -88,8 +176,10 @@ function changeVol(delta) {
     settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
     document.getElementById('vol-slider').value = v;
     document.getElementById('vol-val').textContent = v + '%';
-    if(systemState.playMode === 'browser' && browserAudio) browserAudio.volume = v / 100;
-    else fetch('/control/volume?val=' + v);
+    if(systemState.playMode === 'browser') {
+        if(browserAudio) browserAudio.volume = v / 100;
+        updateWebAudioVolume(v);
+    } else fetch('/control/volume?val=' + v);
 }
 
 // ====== MUTE ======
@@ -98,8 +188,10 @@ function toggleMute() {
     localStorage.setItem('owrtmb_muted', isMuted ? 'true' : 'false');
     updateMuteBtn();
     const vol = isMuted ? 0 : (settings.vol || 50);
-    if(systemState.playMode === 'browser' && browserAudio) browserAudio.volume = vol / 100;
-    else fetch('/control/volume?val=' + vol);
+    if(systemState.playMode === 'browser') {
+        if(browserAudio) browserAudio.volume = vol / 100;
+        updateWebAudioVolume(vol);
+    } else fetch('/control/volume?val=' + vol);
 }
 function updateMuteBtn() {
     const btn = document.getElementById('btn-mute');
@@ -112,7 +204,7 @@ function updateMuteBtn() {
 function playRadio(url) {
     if(!url) return; tg('radio');
     if(systemState.playMode === 'server') setPlayMode('browser');
-    playBrowserAudio('/radio_proxy?url=' + encodeURIComponent(url), 'Radio Stream', url);
+    playBrowserAudio('/radio_proxy?url=' + encodeURIComponent(url), 'Radio Stream');
     setText('tit', 'Radio Stream'); setText('art', 'Live Stream'); setText('tech-specs', 'STREAMING');
     updateModeIndicator();
 }
@@ -144,70 +236,40 @@ function onBrowserTime() {
 }
 function onBrowserEnd() { if(systemState.playMode === 'browser') nextBrowserTrack(); }
 
-// RELIABLE AUDIO PLAY - replace browserAudio.src and play safely
-function playBrowserAudio(src, title, rawUrl) {
+// RELIABLE AUDIO PLAY - just change src, WebAudio follows automatically
+function playBrowserAudio(src, title) {
     if(!browserAudio) return;
-    if(pendingPlay) { console.log("skip double play"); return; }
-    pendingPlay = true;
+    // WebAudio MediaElementSource is already connected to browserAudio
+    // Just changing the src is safe - no need to re-create anything
+    browserAudio.src = src;
+    browserAudio.volume = (settings.vol || 50) / 100;
+    setText('tit', title || 'Unknown');
+    document.body.classList.add('playing');
+    isPlaying = true;
+    updatePlayBtn();
     
-    // Reset audio element properly - prevent media element corruption
-    browserAudio.pause();
-    browserAudio.removeAttribute('src');
-    browserAudio.load();
-    
-    // Small delay for reset
-    setTimeout(() => {
-        // Set new source
-        browserAudio.src = src;
-        browserAudio.volume = (settings.vol || 50) / 100;
-        
-        // Play when data is ready
-        function tryPlay() {
-            const promise = browserAudio.play();
-            if(promise) {
-                promise.then(() => {
-                    pendingPlay = false;
-                    isPlaying = true;
-                    updatePlayBtn();
-                    document.body.classList.add('playing');
-                }).catch((e) => {
-                    pendingPlay = false;
-                    if(e.name === 'NotAllowedError') {
-                        showToast('Tap anywhere to play');
-                        document.addEventListener('click', function handler() {
-                            browserAudio.play().catch(() => {});
-                            document.removeEventListener('click', handler);
-                        }, { once: true });
-                    } else {
-                        showToast('Play failed: ' + e.message);
-                    }
-                });
+    const promise = browserAudio.play();
+    if (promise) {
+        promise.catch((e) => {
+            if (e.name === 'NotAllowedError') {
+                showToast('Tap to play');
+                document.addEventListener('click', () => {
+                    browserAudio.play().catch(() => {});
+                }, { once: true });
             } else {
-                pendingPlay = false;
+                showToast('Play: ' + e.message);
             }
-        }
-        
-        // Handle already-loaded media
-        if (browserAudio.readyState >= 2) {
-            tryPlay();
-        } else {
-            browserAudio.addEventListener('canplay', tryPlay, { once: true });
-            // Fallback: if canplay doesn't fire in 5 seconds, try anyway
-            setTimeout(() => {
-                if(pendingPlay) tryPlay();
-            }, 5000);
-        }
-    }, 50);
+        });
+    }
 }
 
 function nextBrowserTrack() {
     fetch('/play/next_browser').then(r => r.json()).then(d => {
         if(d.index >= 0) {
-            setText('tit', d.title || 'Unknown');
             const src = d.link.includes('youtube') || d.link.includes('youtu.be') 
                 ? '/youtube_proxy?url=' + encodeURIComponent(d.link)
                 : '/stream?path=' + encodeURIComponent(d.link);
-            playBrowserAudio(src, d.title, d.link);
+            playBrowserAudio(src, d.title);
             if(d.thumb) document.getElementById('cover-img').src = d.thumb;
             updateMiniQueue();
         } else {
@@ -226,8 +288,7 @@ function togglePlay() {
                     const src = d.link.includes('youtube') || d.link.includes('youtu.be')
                         ? '/youtube_proxy?url=' + encodeURIComponent(d.link)
                         : '/stream?path=' + encodeURIComponent(d.link);
-                    setText('tit', d.title || 'Unknown');
-                    playBrowserAudio(src, d.title, d.link);
+                    playBrowserAudio(src, d.title);
                 }
             });
         }
@@ -295,6 +356,9 @@ function updateUI() {
 function sendEq() {
     if(eqTimer) clearTimeout(eqTimer);
     eqTimer = setTimeout(() => {
+        if (systemState.playMode === 'browser' && audioInitialized) {
+            updateWebAudioEQ();
+        }
         let q = []; for(let i = 1; i <= 10; i++) q.push('f' + i + '=' + (settings['f' + i] || 0));
         fetch('/control/eq?' + q.join('&'));
     }, 100);
@@ -316,15 +380,11 @@ function ctl(action) {
                                     const src = prev.link.includes('youtube') || prev.link.includes('youtu.be')
                                         ? '/youtube_proxy?url=' + encodeURIComponent(prev.link)
                                         : '/stream?path=' + encodeURIComponent(prev.link);
-                                    setText('tit', prev.title || 'Unknown');
-                                    playBrowserAudio(src, prev.title, prev.link);
+                                    playBrowserAudio(src, prev.title);
                                 }
                             });
                         }, 300);
-                    } else {
-                        // Restart current song
-                        if(browserAudio) { browserAudio.currentTime = 0; }
-                    }
+                    } else if(browserAudio) { browserAudio.currentTime = 0; }
                 });
             }
         } else fetch('/control/prev');
@@ -334,7 +394,7 @@ function ctl(action) {
         else fetch('/control/next');
     }
     else if(action === 'shuffle') fetch('/control/shuffle').then(() => showToast('Shuffled'));
-    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.removeAttribute('src'); browserAudio.load(); } fetch('/control/stop'); }
+    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.src = ''; } fetch('/control/stop'); }
     if(['shuffle', 'prev', 'next'].includes(action)) setTimeout(() => { loadQueue(); updateMiniQueue(); }, 500);
 }
 
@@ -365,22 +425,18 @@ function playSong(url, mode = 'play_now', title = '') {
         if(mode === 'play_now') {
             document.body.classList.add('playing'); showToast('▶ ' + (title || 'Track'));
             if(systemState.playMode === 'browser') {
-                // Play after a small delay to let backend update state
                 setTimeout(() => {
                     fetch('/play/current').then(r => r.json()).then(p => {
                         if(p.link) {
                             const src = p.link.includes('youtube') || p.link.includes('youtu.be')
                                 ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
                                 : '/stream?path=' + encodeURIComponent(p.link);
-                            setText('tit', p.title || title);
-                            playBrowserAudio(src, p.title, p.link);
+                            playBrowserAudio(src, p.title || title);
                             if(p.thumb) document.getElementById('cover-img').src = p.thumb;
                         }
                     });
                 }, 300);
-            } else {
-                isPlaying = true; updatePlayBtn();
-            }
+            } else { isPlaying = true; updatePlayBtn(); }
         } else showToast('+ Queue (' + d.queue_len + ')');
         updateMiniQueue();
     });
@@ -476,6 +532,9 @@ function syncLyrics(t) { if(!document.getElementById('lym').classList.contains('
 
 // ====== BALANCE ======
 function updateBalance(val) {
+    if (systemState.playMode === 'browser' && audioInitialized) {
+        updateWebAudioBalance(val);
+    }
     if(balTimeout) clearTimeout(balTimeout);
     balTimeout = setTimeout(() => {
         let l = 1.0, r = 1.0;
@@ -615,7 +674,6 @@ function initPlaylistPopup() {
             row.onclick = () => {
                 togglePlaylistPopup();
                 if (systemState.playMode === 'browser') {
-                    // Update backend first via play endpoint, then play from current
                     fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
                     setTimeout(() => {
                         fetch('/play/current').then(r => r.json()).then(p => {
@@ -623,8 +681,7 @@ function initPlaylistPopup() {
                                 const src = p.link.includes('youtube') || p.link.includes('youtu.be')
                                     ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
                                     : '/stream?path=' + encodeURIComponent(p.link);
-                                setText('tit', p.title || item.title);
-                                playBrowserAudio(src, p.title, p.link);
+                                playBrowserAudio(src, p.title || item.title);
                                 if(p.thumb) document.getElementById('cover-img').src = p.thumb;
                             }
                         });
@@ -662,8 +719,7 @@ function updateMiniQueue() {
                                     const src = p.link.includes('youtube') || p.link.includes('youtu.be')
                                         ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
                                         : '/stream?path=' + encodeURIComponent(p.link);
-                                    setText('tit', p.title || item.title);
-                                    playBrowserAudio(src, p.title, p.link);
+                                    playBrowserAudio(src, p.title || item.title);
                                 }
                             });
                         }, 300);
@@ -702,8 +758,7 @@ async function loadQueue() {
                                 const src = p.link.includes('youtube') || p.link.includes('youtu.be')
                                     ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
                                     : '/stream?path=' + encodeURIComponent(p.link);
-                                setText('tit', p.title || item.title);
-                                playBrowserAudio(src, p.title, p.link);
+                                playBrowserAudio(src, p.title || item.title);
                             }
                         });
                     }, 300);
@@ -725,7 +780,7 @@ function initPresets() {
         const b = document.createElement('button'); b.className = 'preset-btn' + (settings.active_preset === n ? ' active' : ''); b.textContent = n;
         b.onclick = () => {
             settings.active_preset = n;
-            fetch('/control/preset?name=' + n).then(r => r.json()).then(d => { for(let k in d) settings[k] = d[k]; updateUI(); tg('pr-om'); showToast('EQ: ' + n); });
+            fetch('/control/preset?name=' + n).then(r => r.json()).then(d => { for(let k in d) settings[k] = d[k]; updateUI(); if(systemState.playMode === 'browser' && audioInitialized) updateWebAudioEQ(); tg('pr-om'); showToast('EQ: ' + n); });
         };
         c.appendChild(b);
     });
