@@ -13,16 +13,13 @@ let settings;
 try { settings = JSON.parse(localStorage.getItem('owrtmb_set')) || getDefaults(); }
 catch(e) { settings = getDefaults(); }
 
-// SERVER CONFIG
-const DEVICE_SERVER = '';
-const BROWSER_SERVER = 'http://' + location.hostname + ':2031';
+// SERVER CONFIG - single server for both modes (no CORS issues)
 let playMode = localStorage.getItem('owrtmb_playmode') || 'server';
-let activeServer = playMode === 'server' ? DEVICE_SERVER : BROWSER_SERVER;
 
 function getDefaults() { return { f1:0,f2:0,f3:0,f4:0,f5:0,f6:0,f7:0,f8:0,f9:0,f10:0, vol:50, active_preset:'Normal' }; }
 
 // ====== API HELPER ======
-function api(path) { return activeServer + path; }
+function api(path) { return path; }
 
 // ====== WEB AUDIO (ONE-TIME INIT) ======
 function initWebAudioOnce() {
@@ -278,7 +275,6 @@ function updateModeIndicator() {
 function switchPlayMode(mode) {
     playMode = mode;
     localStorage.setItem('owrtmb_playmode', mode);
-    activeServer = mode === 'server' ? DEVICE_SERVER : BROWSER_SERVER;
     document.getElementById('mode-device').classList.toggle('active', mode === 'server');
     document.getElementById('mode-browser').classList.toggle('active', mode === 'browser');
     if(mode === 'browser' && browserAudio) browserAudio.pause();

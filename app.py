@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file, Response, stream_with_context
+import uuid
 import subprocess
 import json
 import os
@@ -30,6 +31,10 @@ DEFAULT_PATH_FILE = os.path.join(BASE_DIR, "default_path.txt")
 BP_MODE_FILE = "/root/bp_mode"
 
 AUDIO_EXTS = ('.mp3', '.flac', '.wav', '.m4a', '.ogg', '.opus', '.wma', '.aac', '.dsf', '.dff')
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 state_lock = Lock()
 yt_music = YTMusic()
@@ -880,6 +885,170 @@ def search_db():
             'is_local': True
         })
     return jsonify(results)
+
+# ========================
+# BROWSER MODE ENDPOINTS (same server, different logic - no mpv)
+# ========================
+
+@app.route('/browser_play', methods=['GET', 'POST'])
+def browser_play():
+    """Browser mode: update queue ONLY, no mpv."""
+    url = request.args.get('url') or request.form.get('link')
+    mode = request.args.get('mode', 'play_now')
+    title = request.args.get('title', 'Unknown Title')
+    if not url: return jsonify({"error": "no url"})
+    song_obj = {'link': url, 'title': title}
+
+    if mode == 'play_now':
+        if os.path.exists(url) and os.path.isfile(url):
+            folder_path = os.path.dirname(url)
+            try:
+                folder_files = [f for f in os.listdir(folder_path) if f.lower().endswith(AUDIO_EXTS)]
+                folder_files.sort(key=lambda x: x.lower())
+                new_queue = []
+                target_index = 0
+                for idx, fname in enumerate(folder_files):
+                    full_path = os.path.join(folder_path, fname)
+                    new_queue.append({'link': full_path, 'title': fname})
+                    if full_path == url: target_index = idx
+                st4_state["queue"] = new_queue
+                st4_state["current_index"] = target_index
+            except:
+                st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
+        elif "youtube.com" in url or "youtu.be" in url:
+            st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
+            try:
+                match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
+                video_id = match.group(1) if match else None
+                if video_id:
+                    data = yt_music.get_watch_playlist(videoId=video_id, limit=20)
+                    if 'tracks' in data:
+                        new_queue = []
+                        for t in data['tracks']:
+                            vid = t.get('videoId')
+                            if vid:
+                                t_artist = t['artists'][0]['name'] if 'artists' in t and t['artists'] else ""
+                                full_title = f"{t_artist} - {t['title']}" if t_artist else t['title']
+                                new_queue.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
+                        if new_queue: st4_state["queue"] = new_queue; st4_state["current_index"] = 0
+            except: pass
+        else:
+            st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
+        
+        st4_state["status"] = "playing"
+    elif mode == 'enqueue':
+        st4_state["queue"].append(song_obj)
+    
+    return jsonify({"status": "ok", "mode": mode, "queue_len": len(st4_state["queue"])})
+
+@app.route('/play/next_browser')
+def next_browser():
+    """Browser mode: advance queue without mpv."""
+    if not st4_state["queue"]:
+        return jsonify({"index": -1})
+    next_idx = st4_state["current_index"] + 1
+    if next_idx < len(st4_state["queue"]):
+        st4_state["current_index"] = next_idx
+        next_song = st4_state["queue"][next_idx]
+        return jsonify({"index": next_idx, "title": next_song['title'], "link": next_song['link'], "thumb": ""})
+    else:
+        st4_state["status"] = "stopped"
+        return jsonify({"index": -1})
+
+@app.route('/youtube_proxy')
+def youtube_proxy():
+    """Stream YouTube audio directly using yt-dlp without downloading to disk."""
+    url = request.args.get('url', '')
+    if not url: return jsonify({"error": "no url"}), 400
+    try:
+        import yt_dlp
+        ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'no_warnings': True, 'youtube_include_dash_manifest': False}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            direct_url = info.get('url', '')
+        if not direct_url: return jsonify({"error": "could not extract audio URL"}), 500
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': '*/*', 'Range': request.headers.get('Range', 'bytes=0-')}
+        resp = requests.get(direct_url, headers=headers, stream=True, timeout=30)
+        def generate():
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk: yield chunk
+        response = Response(stream_with_context(generate()), status=resp.status_code, content_type=resp.headers.get('Content-Type', 'audio/webm'))
+        if 'Content-Range' in resp.headers: response.headers['Content-Range'] = resp.headers['Content-Range']
+        if 'Content-Length' in resp.headers: response.headers['Content-Length'] = resp.headers['Content-Length']
+        if 'Accept-Ranges' in resp.headers: response.headers['Accept-Ranges'] = resp.headers['Accept-Ranges']
+        return response
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/radio_proxy')
+def radio_proxy():
+    """Proxy radio streams to avoid CORS issues in browser mode."""
+    url = request.args.get('url', '')
+    if not url: return jsonify({"error": "no url"}), 400
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
+        resp = requests.get(url, headers=headers, stream=True, timeout=30)
+        def generate():
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk: yield chunk
+        return Response(stream_with_context(generate()), status=resp.status_code, content_type=resp.headers.get('Content-Type', 'audio/mpeg'))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files: return jsonify({"error":"no file"}),400
+    f = request.files['file']
+    if not f.filename: return jsonify({"error":"no filename"}),400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in AUDIO_EXTS: return jsonify({"error":"unsupported format"}),400
+    uid = str(uuid.uuid4())[:8]
+    safe_name = f"{uid}_{f.filename}"
+    f.save(os.path.join(UPLOAD_DIR, safe_name))
+    return jsonify({"status":"ok","filename":safe_name,"path":os.path.join(UPLOAD_DIR, safe_name)})
+
+@app.route('/uploads')
+def list_uploads():
+    files = []
+    if os.path.exists(UPLOAD_DIR):
+        for fn in sorted(os.listdir(UPLOAD_DIR), key=lambda x: os.path.getmtime(os.path.join(UPLOAD_DIR, x)), reverse=True):
+            fp = os.path.join(UPLOAD_DIR, fn)
+            if os.path.isfile(fp) and fn.lower().endswith(AUDIO_EXTS):
+                files.append({"name":fn, "path":fp, "size":os.path.getsize(fp)})
+    return jsonify(files)
+
+@app.route('/playlist/export_m3u')
+def export_m3u():
+    """Export current queue as M3U file."""
+    from io import StringIO
+    if not st4_state["queue"]:
+        return jsonify({"error": "empty queue"}), 404
+    lines = ["#EXTM3U"]
+    for item in st4_state["queue"]:
+        lines.append(f"#EXTINF:-1,{item['title']}")
+        lines.append(item['link'])
+    content = "\n".join(lines)
+    return Response(content, mimetype='audio/x-mpegurl', headers={'Content-Disposition': 'attachment; filename=playlist.m3u'})
+
+@app.route('/playlist/import_m3u', methods=['POST'])
+def import_m3u():
+    """Import M3U/M3U8/PLS playlist."""
+    try:
+        text = request.get_data(as_text=True)
+        if not text: return jsonify({"status": "error", "info": "empty"}), 400
+        lines = text.strip().split('\n')
+        imported = 0
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#') or line.startswith('['): continue
+            if line.startswith('http') or os.path.exists(line):
+                st4_state["queue"].append({'link': line, 'title': "Unknown"})
+                imported += 1
+        if imported > 0 and st4_state["status"] == "stopped":
+            st4_state["current_index"] = 0
+        return jsonify({"status": "ok", "imported": imported})
+    except Exception as e:
+        return jsonify({"status": "error", "info": str(e)}), 500
 
 if __name__ == '__main__':
     import subprocess
