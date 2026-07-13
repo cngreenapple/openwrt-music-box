@@ -206,14 +206,58 @@ def get_connected_bt():
     except: pass
     return None, None
 
+def detect_alsa_device():
+    """Auto-detect available ALSA audio device."""
+    try:
+        output = subprocess.check_output("aplay -l 2>/dev/null | head -20", shell=True).decode()
+        # Look for USB card first, then any card
+        for line in output.split('\n'):
+            # Match "card X: Name [description], device Y: ..."
+            m = re.search(r'card\s+(\d+).*device\s+(\d+)', line)
+            if m:
+                card = m.group(1)
+                dev = m.group(2)
+                dev_str = f"alsa/plughw:{card},{dev}"
+                logger.info(f"Detected audio device: {dev_str} ({line.strip()})")
+                return dev_str
+    except:
+        pass
+    # Fallback defaults
+    logger.warning("No audio device detected via aplay -l, trying fallbacks")
+    try:
+        # Try card 0, device 0 (most common for USB DAC single device)
+        out = subprocess.check_output("aplay -l 2>/dev/null | grep 'card 0'", shell=True).decode()
+        if out:
+            return "alsa/plughw:0,0"
+    except:
+        pass
+    return "alsa/default"
+
 def get_audio_device_string(mode):
-    if mode == "jack": return "alsa/plughw:1,2"
-    elif mode == "hdmi": return "alsa/plughw:2,0"
+    if mode == "jack":
+        dev = detect_alsa_device()
+        # Save detected device to MODE_FILE for play.sh to use
+        try:
+            with open(MODE_FILE, "w") as f:
+                f.write(dev)
+        except:
+            pass
+        return dev
+    elif mode == "hdmi":
+        # Try to find HDMI device
+        try:
+            output = subprocess.check_output("aplay -l 2>/dev/null | grep -i hdmi | head -1", shell=True).decode()
+            m = re.search(r'card\s+(\d+).*device\s+(\d+)', output)
+            if m:
+                return f"alsa/plughw:{m.group(1)},{m.group(2)}"
+        except:
+            pass
+        return "alsa/plughw:2,0"
     elif mode == "bluetooth":
         mac, name = get_connected_bt()
         if mac: return f"alsa/bluealsa:DEV={mac},PROFILE=a2dp"
         return f"alsa/bluealsa:DEV={st4_state.get('connected_bt_mac','')},PROFILE=a2dp"
-    return "alsa/plughw:1,2"
+    return detect_alsa_device()
 
 def metadata_worker():
     global needs_restore
