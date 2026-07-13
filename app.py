@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file, Response, abort, redirect, stream_with_context
+from flask import Flask, render_template, request, jsonify, send_file, Response, abort, stream_with_context
 import uuid
 import subprocess
 import json
@@ -52,18 +52,19 @@ state_lock = Lock()
 yt_music = YTMusic()
 needs_restore = False
 
-app_state = {
-    "title": "Ready",
-    "artist": "Waiting...",
+# Full ST4 state - this is the core state used by server mode
+st4_state = {
+    "title": "Ready", 
+    "artist": "Waiting...", 
     "album": "",
-    "genre": "",
-    "year": "",
+    "genre": "", 
+    "year": "", 
     "tech_info": "",
-    "current_time": 0,
-    "total_time": 0,
+    "current_time": 0, 
+    "total_time": 0, 
     "status": "stopped",
-    "volume": 30,
-    "status_output": "jack",
+    "volume": 30, 
+    "status_output": "jack", 
     "active_preset": "Normal",
     "thumb": "",
     "queue": [],
@@ -108,16 +109,16 @@ def is_bp_active():
 
 def update_mpv_filters():
     if is_bp_active():
-        mpv_send(["set_property", "af", ""])
+        mpv_send(["set_property", "af", ""]) 
         mpv_send(["set_property", "volume", 100])
-        with state_lock: app_state["volume"] = 100
-        return
-
+        with state_lock: st4_state["volume"] = 100
+        return 
+    
     filters = []
     if af_state["balance"]: filters.append(af_state["balance"])
     if af_state["eq"]: filters.append(af_state["eq"])
     if af_state["crossfeed"]: filters.append(af_state["crossfeed"])
-
+    
     cmd_str = ",".join(filters) if filters else ""
     mpv_send(["set_property", "af", cmd_str])
 
@@ -146,7 +147,7 @@ def extract_local_cover(filepath):
         save_path = os.path.join(COVER_DIR, cover_filename)
         if os.path.exists(save_path): return f"/static/covers/{cover_filename}"
         if os.path.getsize(filepath) < 102400: return ""
-
+        
         cmd = ["ffmpeg", "-i", filepath, "-an", "-vcodec", "mjpeg", "-q:v", "2", "-frames:v", "1", "-y", save_path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         if os.path.exists(save_path): return f"/static/covers/{cover_filename}"
@@ -156,36 +157,36 @@ def extract_local_cover(filepath):
 def trigger_play(url):
     global needs_restore
     if os.path.exists(PLAY_SCRIPT):
-        with state_lock:
-            app_state["last_play_time"] = time.time()
-            if "http" in url: app_state["thumb"] = get_yt_thumb(url)
-            else: app_state["thumb"] = ""
-            app_state["status"] = "loading"
-            app_state["manual_stop"] = False
-
+        with state_lock: 
+            st4_state["last_play_time"] = time.time()
+            if "http" in url: st4_state["thumb"] = get_yt_thumb(url)
+            else: st4_state["thumb"] = ""
+            st4_state["status"] = "loading"
+            st4_state["manual_stop"] = False 
+        
         needs_restore = True
         subprocess.Popen(["/bin/bash", PLAY_SCRIPT, url])
 
 def play_next_in_queue():
     with state_lock:
-        if not app_state["queue"]: return
-        time_diff = time.time() - app_state.get("last_play_time", 0)
-
-        if time_diff < 2.0: app_state["error_count"] += 1
-        else: app_state["error_count"] = 0
-
-        if app_state["error_count"] > 5:
-            app_state["status"] = "stopped"
-            app_state["error_count"] = 0
+        if not st4_state["queue"]: return
+        time_diff = time.time() - st4_state.get("last_play_time", 0)
+        
+        if time_diff < 2.0: st4_state["error_count"] += 1
+        else: st4_state["error_count"] = 0
+            
+        if st4_state["error_count"] > 5:
+            st4_state["status"] = "stopped"
+            st4_state["error_count"] = 0
             return
 
-        next_idx = app_state["current_index"] + 1
-        if next_idx < len(app_state["queue"]):
-            app_state["current_index"] = next_idx
-            next_song = app_state["queue"][next_idx]
+        next_idx = st4_state["current_index"] + 1
+        if next_idx < len(st4_state["queue"]):
+            st4_state["current_index"] = next_idx
+            next_song = st4_state["queue"][next_idx]
             threading.Thread(target=trigger_play, args=(next_song['link'],)).start()
         else:
-            app_state["status"] = "stopped"
+            st4_state["status"] = "stopped"
 
 def find_key_insensitive(data, search_keys):
     if not data or not isinstance(data, dict): return ""
@@ -211,31 +212,31 @@ def get_audio_device_string(mode):
     elif mode == "bluetooth":
         mac, name = get_connected_bt()
         if mac: return f"alsa/bluealsa:DEV={mac},PROFILE=a2dp"
-        return f"alsa/bluealsa:DEV={app_state.get('connected_bt_mac','')},PROFILE=a2dp"
+        return f"alsa/bluealsa:DEV={st4_state.get('connected_bt_mac','')},PROFILE=a2dp"
     return "alsa/plughw:1,2"
 
 def metadata_worker():
     global needs_restore
     last_path = ""
     idle_counter = 0
-
+    
     if not os.path.exists(COVER_DIR): os.makedirs(COVER_DIR, exist_ok=True)
-
+    
     while True:
         try:
             bt_mac, bt_name = get_connected_bt()
             with state_lock:
-                app_state["connected_bt_mac"] = bt_mac or ""
-                app_state["connected_bt_name"] = bt_name or ""
+                st4_state["connected_bt_mac"] = bt_mac or ""
+                st4_state["connected_bt_name"] = bt_name or ""
 
             with state_lock:
-                target = app_state["sleep_target"]
+                target = st4_state["sleep_target"]
                 if target > 0 and time.time() >= target:
-                    app_state["sleep_target"] = 0
-                    app_state["queue"] = []
-                    app_state["current_index"] = -1
+                    st4_state["sleep_target"] = 0
+                    st4_state["queue"] = []
+                    st4_state["current_index"] = -1
                     threading.Thread(target=mpv_send, args=(["stop"],)).start()
-
+            
             mpv_ready = False
             try:
                 if mpv_send(["get_property", "idle-active"]) is not None:
@@ -243,24 +244,24 @@ def metadata_worker():
             except: pass
 
             if mpv_ready:
-                idle_counter = 0
+                idle_counter = 0 
                 path = mpv_send(["get_property", "path"])
-
+                
                 if path and (path != last_path or needs_restore):
                     last_path = path
                     needs_restore = False
                     time.sleep(0.5)
-                    with state_lock: saved_vol = app_state["volume"]
+                    with state_lock: saved_vol = st4_state["volume"]
                     mpv_send(["set_property", "volume", saved_vol])
                     update_mpv_filters()
 
                 is_eof = mpv_send(["get_property", "eof-reached"])
                 is_idle = mpv_send(["get_property", "idle-active"])
-
-                if app_state.get("manual_stop", False):
+                
+                if st4_state.get("manual_stop", False):
                     if is_idle:
-                        with state_lock: app_state["manual_stop"] = False
-                elif is_eof is True or (is_idle is True and app_state["status"] == "playing"):
+                        with state_lock: st4_state["manual_stop"] = False
+                elif is_eof is True or (is_idle is True and st4_state["status"] == "playing"):
                     play_next_in_queue()
                     time.sleep(1)
                     continue
@@ -268,29 +269,29 @@ def metadata_worker():
                 final_thumb = ""
                 queue_title = "Unknown Title"
                 with state_lock:
-                    if app_state["queue"] and app_state["current_index"] < len(app_state["queue"]):
-                        queue_item = app_state["queue"][app_state["current_index"]]
+                    if st4_state["queue"] and st4_state["current_index"] < len(st4_state["queue"]):
+                        queue_item = st4_state["queue"][st4_state["current_index"]]
                         final_thumb = queue_item.get('thumb', '')
                         queue_title = queue_item.get('title', 'Unknown Title')
-
+                
                 if not final_thumb:
-                    if path and "http" in path:
+                    if path and "http" in path: 
                         if "googlevideo" not in path: final_thumb = get_yt_thumb(path)
                     else:
                         loc = extract_local_cover(path)
                         if loc: final_thumb = loc
-                with state_lock: app_state["thumb"] = final_thumb
+                with state_lock: st4_state["thumb"] = final_thumb
 
                 meta_all = mpv_send(["get_property", "metadata"]) or {}
                 mpv_title = mpv_send(["get_property", "media-title"])
-
-                final_title = queue_title
+                
+                final_title = queue_title 
                 if mpv_title:
                     is_junk = any(x in mpv_title.lower() for x in ["http", "www.", ".com", "webm&", "googlevideo", "?source"])
                     if not is_junk: final_title = mpv_title
-
+                
                 temp_artist = find_key_insensitive(meta_all, ["artist", "performer", "composer"])
-
+                
                 if not temp_artist or temp_artist.lower() == "unknown artist":
                     target_title = queue_title if " - " in queue_title else final_title
                     if " - " in target_title:
@@ -299,24 +300,24 @@ def metadata_worker():
                         final_title = parts[1].strip()
                     else:
                         temp_artist = "Unknown Artist"
-
+                
                 temp_album = find_key_insensitive(meta_all, ["album"]) or ""
                 temp_genre = find_key_insensitive(meta_all, ["genre"])
                 temp_year = find_key_insensitive(meta_all, ["date", "year", "original_date"])
-
+                
                 is_paused = mpv_send(["get_property", "pause"])
                 temp_status = "paused" if is_paused else "playing"
 
                 tech_display = []
                 raw_codec = mpv_send(["get_property", "audio-codec-name"])
-                raw_fmt = mpv_send(["get_property", "audio-params/format"])
-                raw_rate = mpv_send(["get_property", "audio-params/samplerate"])
+                raw_fmt = mpv_send(["get_property", "audio-params/format"]) 
+                raw_rate = mpv_send(["get_property", "audio-params/samplerate"]) 
                 raw_br = mpv_send(["get_property", "audio-bitrate"])
-
+                
                 codec_str = raw_codec.upper() if raw_codec else "UNK"
                 lossy_list = ['MP3', 'AAC', 'VORBIS', 'OPUS', 'WMA', 'WEBM', 'OGG', 'SBC']
                 is_lossy = any(x in codec_str for x in lossy_list)
-
+                
                 bit_depth = ""
                 if raw_fmt:
                     if 's16' in raw_fmt: bit_depth = "16bit"
@@ -344,7 +345,7 @@ def metadata_worker():
                         if f_size and f_dur and float(f_dur) > 0:
                             final_bitrate_val = (int(f_size) * 8) / float(f_dur)
                     except: pass
-
+                
                 if final_bitrate_val > 0:
                     bitrate_str = f"{int(final_bitrate_val/1000)}kbps"
 
@@ -360,13 +361,13 @@ def metadata_worker():
                 tech_display.append(codec_str)
                 if bitrate_str: tech_display.append(bitrate_str)
                 if freq_str: tech_display.append(freq_str)
-                if not is_lossy and bit_depth: tech_display.append(bit_depth)
+                if not is_lossy and bit_depth: tech_display.append(bit_depth) 
                 tech_display.append(quality_badge)
 
                 temp_info = " • ".join(tech_display)
-
+                
                 with state_lock:
-                    app_state.update({
+                    st4_state.update({
                         "title": final_title,
                         "artist": temp_artist, "album": temp_album,
                         "genre": temp_genre, "year": temp_year,
@@ -376,18 +377,14 @@ def metadata_worker():
                         "total_time": mpv_send(["get_property", "duration"]) or 0
                     })
                     val_vol = mpv_send(["get_property", "volume"])
-                    if val_vol is not None: app_state["volume"] = val_vol
+                    if val_vol is not None: st4_state["volume"] = val_vol
             else:
-                # Don't count idle time when we're intentionally loading a new track
-                if app_state.get("status") == "loading":
-                    idle_counter = 0
-                else:
-                    idle_counter += 1
-                    if idle_counter == 5:
-                        with state_lock: app_state["status"] = "stopped"
-                    if idle_counter == 15 and app_state["status"] != "stopped":
-                        play_next_in_queue()
-
+                idle_counter += 1
+                if idle_counter == 5:
+                    with state_lock: st4_state["status"] = "stopped"
+                if idle_counter == 15 and st4_state["status"] != "stopped":
+                    play_next_in_queue()
+                    
         except Exception as e:
             logger.error(f"metadata_worker error: {e}")
         time.sleep(1)
@@ -404,7 +401,7 @@ def index(): return render_template('index.html')
 @app.route('/status')
 def status():
     with state_lock:
-        resp = app_state.copy()
+        resp = st4_state.copy()
         target = resp.get("sleep_target", 0)
         if target > 0:
             remaining = int(target - time.time())
@@ -422,14 +419,14 @@ def status():
 @app.route('/get_lyrics')
 def get_lyrics():
     with state_lock:
-        artist = app_state.get("artist", "")
-        title = app_state.get("title", "")
-
+        artist = st4_state.get("artist", "")
+        title = st4_state.get("title", "")
+    
     if not title: return jsonify({"error": "No track info"})
 
     clean_title = re.sub(r"\(.*?\)|\[.*?\]|【.*?】", "", title).strip()
     headers = {"User-Agent": "ST4Player/1.0"}
-
+    
     try:
         if not artist or artist == "Unknown Artist":
             url = "https://lrclib.net/api/search"
@@ -444,7 +441,7 @@ def get_lyrics():
         url = "https://lrclib.net/api/get"
         params = {"artist_name": artist, "track_name": clean_title}
         resp = requests.get(url, params=params, headers=headers, timeout=5)
-
+        
         if resp.status_code == 404:
             url_search = "https://lrclib.net/api/search"
             resp_search = requests.get(url_search, params={"q": f"{artist} {clean_title}"}, headers=headers, timeout=5)
@@ -454,12 +451,12 @@ def get_lyrics():
                 if best_match.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": best_match['syncedLyrics']})
                 elif best_match.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": best_match['plainLyrics']})
             return jsonify({"error": "Not found"})
-
+            
         data = resp.json()
         if data.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": data['syncedLyrics']})
         elif data.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": data['plainLyrics']})
         else: return jsonify({"error": "Not found"})
-
+            
     except Exception as e:
         return jsonify({"error": str(e)})
 
@@ -469,13 +466,13 @@ def bt_scan():
         subprocess.run("bluetoothctl scan off", shell=True)
         subprocess.run("bluetoothctl power on", shell=True)
         subprocess.run("timeout 10s bluetoothctl scan on", shell=True)
-
+        
         out = subprocess.check_output("bluetoothctl devices", shell=True).decode()
         devices = []
         matches = re.findall(r"Device\s+([0-9A-F:]{17})\s+(.+)", out)
         for mac, name in matches:
             clean_name = name.strip()
-            if clean_name.replace("-", ":") != mac:
+            if clean_name.replace("-", ":") != mac: 
                 devices.append({'mac': mac, 'name': clean_name})
         return jsonify(devices)
     except: return jsonify([])
@@ -484,23 +481,23 @@ def bt_scan():
 def bt_connect():
     mac = request.args.get('mac')
     if not mac or ";" in mac: return jsonify({"status":"error"})
-
+    
     try:
         subprocess.run("pgrep bluealsa || bluealsa &", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1)
-
+        time.sleep(1) 
+        
         subprocess.run("bluetoothctl agent on", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run("bluetoothctl default-agent", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+        
         subprocess.run(["bluetoothctl", "pair", mac], timeout=15, check=False)
         subprocess.run(["bluetoothctl", "trust", mac], check=False)
-
+        
         subprocess.run(["bluetoothctl", "connect", mac], timeout=10, check=False)
-
+        
         time.sleep(2)
-
+        
         info = subprocess.check_output(f"bluetoothctl info {mac}", shell=True, text=True)
-
+        
         if "Connected: yes" in info:
             dev_name = "Bluetooth Device"
             m = re.search(r"Name:\s+(.*)", info)
@@ -509,17 +506,17 @@ def bt_connect():
             dev_str = f"alsa/bluealsa:DEV={mac},PROFILE=a2dp"
             mpv_send(["set_property", "audio-device", dev_str])
             with open(MODE_FILE, "w") as f: f.write(dev_str)
-
+            
             with state_lock:
-                app_state["connected_bt_mac"] = mac
-                app_state["connected_bt_name"] = dev_name
-                app_state["status_output"] = "bluetooth"
-
+                st4_state["connected_bt_mac"] = mac
+                st4_state["connected_bt_name"] = dev_name
+                st4_state["status_output"] = "bluetooth"
+                
             return jsonify({"status":"ok", "name": dev_name})
         else:
             return jsonify({"status":"failed", "info": "Gagal terhubung. Coba restart TWS/Speaker lalu coba lagi."})
-
-    except Exception as e:
+            
+    except Exception as e: 
         return jsonify({"status":"error", "info": str(e)})
 
 @app.route('/bt/disconnect')
@@ -535,14 +532,14 @@ def toggle_bitperfect():
         try:
             with open(BP_MODE_FILE, 'r') as f: current = f.read().strip()
         except: pass
-
+    
     new_state = "1" if current == "0" else "0"
     with open(BP_MODE_FILE, 'w') as f: f.write(new_state)
     update_mpv_filters()
-
+    
     if new_state == "0":
         mpv_send(["set_property", "volume", 30])
-        with state_lock: app_state["volume"] = 30
+        with state_lock: st4_state["volume"] = 30
 
     return jsonify({"status": "ok", "bitperfect": new_state == "1"})
 
@@ -569,10 +566,10 @@ def jump_to_index():
     try:
         idx = int(request.args.get('index', -1))
         with state_lock:
-            if 0 <= idx < len(app_state["queue"]):
-                app_state["current_index"] = idx
-                song = app_state["queue"][idx]
-                app_state["error_count"] = 0
+            if 0 <= idx < len(st4_state["queue"]):
+                st4_state["current_index"] = idx
+                song = st4_state["queue"][idx]
+                st4_state["error_count"] = 0
                 threading.Thread(target=trigger_play, args=(song['link'],)).start()
                 return jsonify({"status": "ok", "title": song['title']})
     except: pass
@@ -585,7 +582,7 @@ def play():
     title = request.args.get('title', 'Unknown Title')
     if not url: return jsonify({"error": "no url"})
     song_obj = {'link': url, 'title': title}
-
+    
     with state_lock:
         if mode == 'play_now':
             if os.path.exists(url) and os.path.isfile(url):
@@ -599,12 +596,12 @@ def play():
                         full_path = os.path.join(folder_path, fname)
                         new_queue.append({'link': full_path, 'title': fname})
                         if full_path == url: target_index = idx
-                    app_state["queue"] = new_queue
-                    app_state["current_index"] = target_index
+                    st4_state["queue"] = new_queue
+                    st4_state["current_index"] = target_index
                 except:
-                    app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                    st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
             elif "youtube.com" in url or "youtu.be" in url:
-                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
                 try:
                     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
                     video_id = match.group(1) if match else None
@@ -618,39 +615,23 @@ def play():
                                     t_artist = t['artists'][0]['name'] if 'artists' in t and t['artists'] else ""
                                     full_title = f"{t_artist} - {t['title']}" if t_artist else t['title']
                                     new_queue.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
-                            if new_queue: app_state["queue"] = new_queue; app_state["current_index"] = 0
+                            if new_queue: st4_state["queue"] = new_queue; st4_state["current_index"] = 0
                 except: pass
             else:
-                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
-
-            app_state["error_count"] = 0
+                st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
+            
+            st4_state["error_count"] = 0
             threading.Thread(target=trigger_play, args=(url,)).start()
         elif mode == 'enqueue':
-            app_state["queue"].append(song_obj)
-            if app_state["status"] == "stopped" and len(app_state["queue"]) == 1:
-                app_state["current_index"] = 0
+            st4_state["queue"].append(song_obj)
+            if st4_state["status"] == "stopped" and len(st4_state["queue"]) == 1:
+                st4_state["current_index"] = 0
                 threading.Thread(target=trigger_play, args=(url,)).start()
-    return jsonify({"status": "ok", "mode": mode, "queue_len": len(app_state["queue"])})
-
-@app.route('/play/mode')
-def set_play_mode():
-    mode = request.args.get('mode', 'server')
-    with state_lock: app_state["play_mode"] = mode
-    if mode == "browser": mpv_send(["stop"])
-    return jsonify({"status": "ok", "mode": mode})
-
-@app.route('/play/current')
-def play_current():
-    with state_lock:
-        idx = app_state["current_index"]
-        if 0 <= idx < len(app_state["queue"]):
-            s = app_state["queue"][idx]
-            return jsonify({"index": idx, "title": s['title'], "link": s['link'], "thumb": app_state["thumb"]})
-        return jsonify({"index": -1})
+    return jsonify({"status": "ok", "mode": mode, "queue_len": len(st4_state["queue"])})
 
 @app.route('/browser_play', methods=['GET', 'POST'])
 def browser_play():
-    """Browser mode play - update queue WITHOUT triggering mpv."""
+    """Browser mode: update queue ONLY, no mpv."""
     url = request.args.get('url') or request.form.get('link')
     mode = request.args.get('mode', 'play_now')
     title = request.args.get('title', 'Unknown Title')
@@ -659,7 +640,6 @@ def browser_play():
 
     with state_lock:
         if mode == 'play_now':
-            # For local files, scan directory like /play does
             if os.path.exists(url) and os.path.isfile(url):
                 folder_path = os.path.dirname(url)
                 try:
@@ -671,12 +651,12 @@ def browser_play():
                         full_path = os.path.join(folder_path, fname)
                         new_queue.append({'link': full_path, 'title': fname})
                         if full_path == url: target_index = idx
-                    app_state["queue"] = new_queue
-                    app_state["current_index"] = target_index
+                    st4_state["queue"] = new_queue
+                    st4_state["current_index"] = target_index
                 except:
-                    app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                    st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
             elif "youtube.com" in url or "youtu.be" in url:
-                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
                 try:
                     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
                     video_id = match.group(1) if match else None
@@ -690,72 +670,88 @@ def browser_play():
                                     t_artist = t['artists'][0]['name'] if 'artists' in t and t['artists'] else ""
                                     full_title = f"{t_artist} - {t['title']}" if t_artist else t['title']
                                     new_queue.append({'link': f"https://music.youtube.com/watch?v={vid}", 'title': full_title})
-                            if new_queue: app_state["queue"] = new_queue; app_state["current_index"] = 0
+                            if new_queue: st4_state["queue"] = new_queue; st4_state["current_index"] = 0
                 except: pass
             else:
-                app_state["queue"] = [song_obj]; app_state["current_index"] = 0
+                st4_state["queue"] = [song_obj]; st4_state["current_index"] = 0
             
-            app_state["error_count"] = 0
-            app_state["status"] = "playing"
+            st4_state["error_count"] = 0
+            st4_state["status"] = "playing"
         elif mode == 'enqueue':
-            app_state["queue"].append(song_obj)
-    return jsonify({"status": "ok", "mode": mode, "queue_len": len(app_state["queue"])})
+            st4_state["queue"].append(song_obj)
+    return jsonify({"status": "ok", "mode": mode, "queue_len": len(st4_state["queue"])})
+
+@app.route('/play/current')
+def play_current():
+    with state_lock:
+        idx = st4_state["current_index"]
+        if 0 <= idx < len(st4_state["queue"]):
+            s = st4_state["queue"][idx]
+            return jsonify({"index": idx, "title": s['title'], "link": s['link'], "thumb": st4_state["thumb"]})
+        return jsonify({"index": -1})
 
 @app.route('/play/next_browser')
 def next_browser():
-    # Browser mode: advance queue index without calling trigger_play (mpv)
+    """Browser mode: advance queue without mpv."""
     with state_lock:
-        if not app_state["queue"]:
+        if not st4_state["queue"]:
             return jsonify({"index": -1})
-        next_idx = app_state["current_index"] + 1
-        if next_idx < len(app_state["queue"]):
-            app_state["current_index"] = next_idx
-            next_song = app_state["queue"][next_idx]
+        next_idx = st4_state["current_index"] + 1
+        if next_idx < len(st4_state["queue"]):
+            st4_state["current_index"] = next_idx
+            next_song = st4_state["queue"][next_idx]
             return jsonify({
                 "index": next_idx,
                 "title": next_song['title'],
                 "link": next_song['link'],
-                "thumb": app_state.get("thumb", "")
+                "thumb": st4_state.get("thumb", "")
             })
         else:
-            app_state["status"] = "stopped"
+            st4_state["status"] = "stopped"
             return jsonify({"index": -1})
+
+@app.route('/play/mode')
+def set_play_mode():
+    mode = request.args.get('mode', 'server')
+    with state_lock:
+        st4_state["play_mode"] = mode
+    if mode == "browser": mpv_send(["stop"])
+    return jsonify({"status": "ok", "mode": mode})
 
 @app.route('/control/<action>')
 def control(action):
-    if action == "pause":
+    if action == "pause": 
         mpv_send(["cycle", "pause"])
-        with state_lock: app_state["status"] = "paused" if app_state["status"] == "playing" else "playing"
     elif action == "stop":
         mpv_send(["stop"])
         with state_lock:
-            app_state["status"] = "stopped"
-            app_state["queue"] = []
-            app_state["current_index"] = -1
-            app_state["manual_stop"] = True
-    elif action == "next":
+            st4_state["status"] = "stopped"
+            st4_state["queue"] = []
+            st4_state["current_index"] = -1
+            st4_state["manual_stop"] = True
+    elif action == "next": 
         play_next_in_queue()
     elif action == "prev":
         with state_lock:
-            if app_state["current_index"] > 0:
-                app_state["current_index"] -= 1
-                prev_song = app_state["queue"][app_state["current_index"]]
+            if st4_state["current_index"] > 0:
+                st4_state["current_index"] -= 1
+                prev_song = st4_state["queue"][st4_state["current_index"]]
                 trigger_play(prev_song['link'])
             else: mpv_send(["seek", 0, "absolute"])
     elif action == "shuffle":
         with state_lock:
-            if len(app_state["queue"]) > 1:
-                current_song = app_state["queue"][app_state["current_index"]]
-                random.shuffle(app_state["queue"])
-                for idx, song in enumerate(app_state["queue"]):
+            if len(st4_state["queue"]) > 1:
+                current_song = st4_state["queue"][st4_state["current_index"]]
+                random.shuffle(st4_state["queue"])
+                for idx, song in enumerate(st4_state["queue"]):
                     if song['link'] == current_song['link']:
-                        app_state["current_index"] = idx; break
+                        st4_state["current_index"] = idx; break
         return jsonify({"status": "shuffled"})
     elif action == "volume":
-        try:
+        try: 
             v = int(request.args.get('val', 30))
             mpv_send(["set_property", "volume", v])
-            with state_lock: app_state["volume"] = v
+            with state_lock: st4_state["volume"] = v
         except: pass
     elif action == "seek":
         try: mpv_send(["seek", float(request.args.get('val', 0)), "absolute-percent"])
@@ -767,7 +763,7 @@ def control(action):
         if os.path.exists(TOGGLE_SCRIPT): subprocess.run(["/bin/bash", TOGGLE_SCRIPT, dev_string], check=False)
         else:
             with open(MODE_FILE, "w") as f: f.write(dev_string)
-        with state_lock: app_state["status_output"] = target
+        with state_lock: st4_state["status_output"] = target
         return jsonify({"status": "ok", "active": target})
     return jsonify({"status": "ok"})
 
@@ -788,7 +784,7 @@ def set_eq():
     cmd_str = generate_fireq_cmd(gains)
     af_state["eq"] = f"lavfi=[{cmd_str}]"
     update_mpv_filters()
-    with state_lock: app_state["current_eq_cmd"] = af_state["eq"]
+    with state_lock: st4_state["current_eq_cmd"] = af_state["eq"]
     return jsonify({"status": "ok"})
 
 @app.route('/control/preset')
@@ -799,26 +795,26 @@ def set_preset():
         cmd_str = generate_fireq_cmd(preset)
         af_state["eq"] = f"lavfi=[{cmd_str}]"
         update_mpv_filters()
-        with state_lock:
-            app_state["active_preset"] = n
-            app_state["current_eq_cmd"] = af_state["eq"]
+        with state_lock: 
+            st4_state["active_preset"] = n
+            st4_state["current_eq_cmd"] = af_state["eq"]
         return jsonify(preset)
     return jsonify({"error": "not found"}), 404
 
 @app.route('/queue/list')
 def get_queue():
-    with state_lock: return jsonify({"queue": app_state["queue"], "current_index": app_state["current_index"]})
+    with state_lock: return jsonify({"queue": st4_state["queue"], "current_index": st4_state["current_index"]})
 
 @app.route('/queue/clear')
 def clear_queue():
-    with state_lock: app_state["queue"] = []; app_state["current_index"] = -1
+    with state_lock: st4_state["queue"] = []; st4_state["current_index"] = -1
     return jsonify({"status": "cleared"})
 
 @app.route('/get_files')
 def get_files():
     target = request.args.get('path', '/')
     items = []
-
+    
     if target == '/':
         return jsonify([
             {'name': '🏠 Internal Storage (/root)', 'path': '/root', 'type': 'dir'},
@@ -829,20 +825,20 @@ def get_files():
 
     try:
         abs_path = os.path.abspath(target)
-
+        
         if abs_path != '/':
             parent = os.path.dirname(abs_path)
             if abs_path in ['/root', '/mnt']:
                 parent = '/'
             items.append({'name': '..', 'path': parent, 'type': 'dir'})
-
+            
         with os.scandir(abs_path) as entries:
             entry_list = list(entries)
             entry_list.sort(key=lambda e: (not e.is_dir(), e.name.lower()))
-
+            
             for entry in entry_list:
                 if entry.name.startswith('.'): continue
-                if entry.is_dir():
+                if entry.is_dir(): 
                     items.append({'name': entry.name, 'path': entry.path, 'type': 'dir'})
                 elif entry.is_file() and entry.name.lower().endswith(AUDIO_EXTS):
                     items.append({'name': entry.name, 'path': entry.path, 'type': 'file'})
@@ -885,7 +881,7 @@ def handle_default_path():
 def set_timer():
     try: minutes = int(request.args.get('min', 0))
     except: minutes = 0
-    with state_lock: app_state["sleep_target"] = (time.time() + minutes*60) if minutes > 0 else 0
+    with state_lock: st4_state["sleep_target"] = (time.time() + minutes*60) if minutes > 0 else 0
     return jsonify({"status": "ok", "timer": minutes})
 
 @app.route('/get_playlist')
@@ -912,10 +908,10 @@ def set_balance():
         l_vol = 1.0; r_vol = 1.0
 
     pan_cmd = f"pan=stereo|c0={l_vol:.2f}*c0|c1={r_vol:.2f}*c1"
-
+    
     if l_vol >= 0.99 and r_vol >= 0.99: af_state["balance"] = ""
     else: af_state["balance"] = f"lavfi=[{pan_cmd}]"
-
+    
     update_mpv_filters()
     return jsonify({"status": "ok", "L": l_vol, "R": r_vol})
 
@@ -927,7 +923,7 @@ def scan_library():
             try:
                 with open(DEFAULT_PATH_FILE, 'r') as f: scan_path = f.read().strip()
             except: pass
-
+            
         lib_mgr.scan_directory(scan_path)
         return jsonify({"status": "started", "path": scan_path})
     return jsonify({"status": "disabled"})
@@ -942,7 +938,7 @@ def library_tracks():
     if not lib_mgr: return jsonify([])
     sort_mode = request.args.get('sort', 'title')
     tracks = lib_mgr.get_all_tracks(sort_mode)
-
+    
     formatted = []
     for t in tracks:
         formatted.append({
@@ -960,7 +956,7 @@ def search_db():
     if not lib_mgr: return jsonify([])
     q = request.args.get('q', '')
     if not q: return jsonify([])
-
+    
     results = lib_mgr.search_tracks(q)
     formatted = []
     for t in results:
@@ -969,7 +965,7 @@ def search_db():
             'artist': t['artist'],
             'album': t['album'],
             'link': t['path'],
-            'thumb': '/static/img/default.png',
+            'thumb': '/static/img/default.png', 
             'is_local': True
         })
     return jsonify(results)
@@ -1017,19 +1013,15 @@ def list_uploads():
                 files.append({"name":fn, "path":fp, "size":os.path.getsize(fp)})
     return jsonify(files)
 
-# ========================
-# PLAYLIST EXPORT/IMPORT (M3U)
-# ========================
-
 @app.route('/playlist/export_m3u')
 def export_m3u():
     """Export current queue as M3U file."""
     from io import StringIO
     with state_lock:
-        if not app_state["queue"]:
+        if not st4_state["queue"]:
             return jsonify({"error": "empty queue"}), 404
         lines = ["#EXTM3U"]
-        for item in app_state["queue"]:
+        for item in st4_state["queue"]:
             lines.append(f"#EXTINF:-1,{item['title']}")
             lines.append(item['link'])
         content = "\n".join(lines)
@@ -1053,18 +1045,14 @@ def import_m3u():
                     continue
                 if line.startswith('http') or os.path.exists(line):
                     title = "Unknown"
-                    app_state["queue"].append({'link': line, 'title': title})
+                    st4_state["queue"].append({'link': line, 'title': title})
                     imported += 1
-            if imported > 0 and app_state["status"] == "stopped":
-                app_state["current_index"] = 0
+            if imported > 0 and st4_state["status"] == "stopped":
+                st4_state["current_index"] = 0
 
         return jsonify({"status": "ok", "imported": imported})
     except Exception as e:
         return jsonify({"status": "error", "info": str(e)}), 500
-
-# ========================
-# YOUTUBE STREAM PROXY (no download)
-# ========================
 
 @app.route('/youtube_proxy')
 def youtube_proxy():
@@ -1075,8 +1063,6 @@ def youtube_proxy():
 
     try:
         import yt_dlp
-
-        # Get the direct audio URL using yt-dlp
         ydl_opts = {
             'format': 'bestaudio/best',
             'quiet': True,
@@ -1088,14 +1074,12 @@ def youtube_proxy():
             info = ydl.extract_info(url, download=False)
             direct_url = info.get('url', '')
             title = info.get('title', 'Unknown')
-            thumbnail = info.get('thumbnail', '')
 
         if not direct_url:
             return jsonify({"error": "could not extract audio URL"}), 500
 
         logger.info(f"Streaming YouTube: {title}")
 
-        # Stream the audio directly with proper headers
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': '*/*',
@@ -1104,7 +1088,6 @@ def youtube_proxy():
 
         resp = requests.get(direct_url, headers=headers, stream=True, timeout=30)
 
-        # Forward the response as a streaming response
         def generate():
             for chunk in resp.iter_content(chunk_size=8192):
                 if chunk:
@@ -1116,7 +1099,6 @@ def youtube_proxy():
             content_type=resp.headers.get('Content-Type', 'audio/webm')
         )
 
-        # Forward range headers for seeking support
         if 'Content-Range' in resp.headers:
             response.headers['Content-Range'] = resp.headers['Content-Range']
         if 'Content-Length' in resp.headers:
@@ -1129,10 +1111,6 @@ def youtube_proxy():
     except Exception as e:
         logger.error(f"youtube_proxy error: {e}")
         return jsonify({"error": str(e)}), 500
-
-# ========================
-# RADIO STREAM PROXY
-# ========================
 
 @app.route('/radio_proxy')
 def radio_proxy():
