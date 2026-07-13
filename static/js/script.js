@@ -62,7 +62,6 @@ function updateWebAudioEQ() {
     if (!audioCtx || eqFilters.length === 0) return;
     for (let i = 0; i < 10; i++) eqFilters[i].gain.value = settings['f' + (i+1)] || 0;
 }
-
 function updateWebAudioBalance(val) { if (pannerNode) pannerNode.pan.value = val / 100; }
 function updateWebAudioVolume(v) { if (gainNode) gainNode.gain.value = v / 100; }
 
@@ -323,9 +322,14 @@ function updateUI() {
 function sendEq() {
     if(eqTimer) clearTimeout(eqTimer);
     eqTimer = setTimeout(() => {
-        if (playMode === 'browser' && audioInitialized) updateWebAudioEQ();
-        let q = []; for(let i = 1; i <= 10; i++) q.push('f' + i + '=' + (settings['f' + i] || 0));
-        fetch(api('/control/eq?' + q.join('&')));
+        if (playMode === 'browser') {
+            // Browser mode: apply EQ via WebAudio locally
+            if (audioInitialized) updateWebAudioEQ();
+        } else {
+            // Server mode: send EQ to mpv
+            let q = []; for(let i = 1; i <= 10; i++) q.push('f' + i + '=' + (settings['f' + i] || 0));
+            fetch(api('/control/eq?' + q.join('&')));
+        }
     }, 100);
 }
 
@@ -358,8 +362,15 @@ function ctl(action) {
         if(playMode === 'browser') nextBrowserTrack();
         else fetch(api('/control/next'));
     }
-    else if(action === 'shuffle') fetch(api('/control/shuffle')).then(() => showToast('Shuffled'));
-    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.src = ''; } fetch(api('/control/stop')); }
+    else if(action === 'shuffle') {
+        if (playMode === 'browser') {
+            // Browser mode: no shuffle on backend, just toast
+            showToast('Shuffled (browser)');
+        } else {
+            fetch(api('/control/shuffle')).then(() => showToast('Shuffled'));
+        }
+    }
+    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.src = ''; } if(playMode !== 'browser') fetch(api('/control/stop')); }
     if(['shuffle', 'prev', 'next'].includes(action)) setTimeout(() => { loadQueue(); updateMiniQueue(); }, 500);
 }
 
@@ -410,14 +421,19 @@ function playSong(url, mode = 'play_now', title = '') {
 
 // ====== STATUS POLL ======
 function pollStatus() {
+    if (playMode === 'browser') {
+        // Browser mode: only update time from local audio element, skip backend
+        updateMiniQueue();
+        return;
+    }
+    // Server mode: poll from device backend
     fetch(api('/status')).then(r => r.json()).then(d => {
-        if (playMode !== 'browser') {
-            setText('tit', d.title || 'Ready');
-            setText('art', d.artist || 'OwrtBox');
-            setText('tech-specs', d.tech_info || 'AWAITING SIGNAL');
-        }
+        setText('tit', d.title || 'Ready');
+        setText('art', d.artist || 'OwrtBox');
+        setText('tech-specs', d.tech_info || 'AWAITING SIGNAL');
+
         const vs = document.getElementById('vol-slider');
-        if(vs && d.volume !== undefined && playMode !== 'browser') {
+        if(vs && d.volume !== undefined) {
             const sv = parseInt(d.volume);
             if(!isMuted && vs.value != sv) {
                 vs.value = sv;
@@ -432,10 +448,8 @@ function pollStatus() {
             const el = document.getElementById(id);
             if(el) { el.textContent = d[id] || ''; el.style.display = d[id] ? 'inline-flex' : 'none'; }
         });
-        if(playMode !== 'browser') {
-            if(d.status === 'playing' && !isPlaying) { isPlaying = true; updatePlayBtn(); document.body.classList.add('playing'); document.getElementById('cover-img').classList.add('spin'); }
-            else if(d.status !== 'playing' && isPlaying) { isPlaying = false; updatePlayBtn(); document.body.classList.remove('playing'); document.getElementById('cover-img').classList.remove('spin'); }
-        }
+        if(d.status === 'playing' && !isPlaying) { isPlaying = true; updatePlayBtn(); document.body.classList.add('playing'); document.getElementById('cover-img').classList.add('spin'); }
+        else if(d.status !== 'playing' && isPlaying) { isPlaying = false; updatePlayBtn(); document.body.classList.remove('playing'); document.getElementById('cover-img').classList.remove('spin'); }
         const ci = document.getElementById('cover-img');
         if(ci && d.thumb && ci.src !== d.thumb) ci.src = d.thumb;
         else if(ci && !d.thumb && !ci.src.includes('default.png')) ci.src = '/static/img/default.png';
@@ -488,16 +502,22 @@ function updateBalance(val) {
     if (playMode === 'browser' && audioInitialized) updateWebAudioBalance(val);
     if(balTimeout) clearTimeout(balTimeout);
     balTimeout = setTimeout(() => {
-        let l = 1.0, r = 1.0;
-        if(val < 0) r = 1 - (Math.abs(val) / 100); else if(val > 0) l = 1 - (val / 100);
-        fetch(api('/control/balance?l=' + l.toFixed(2) + '&r=' + r.toFixed(2)));
+        if (playMode !== 'browser') {
+            let l = 1.0, r = 1.0;
+            if(val < 0) r = 1 - (Math.abs(val) / 100); else if(val > 0) l = 1 - (val / 100);
+            fetch(api('/control/balance?l=' + l.toFixed(2) + '&r=' + r.toFixed(2)));
+        }
     }, 100);
 }
 
 // ====== OUTPUT ======
-function manualOut(t) { fetch(api('/control/output?mode=' + t)); showToast('Output: ' + t.toUpperCase()); tg('om'); }
+function manualOut(t) {
+    if (playMode === 'browser') { showToast('Switch to Device Mode for output'); return; }
+    fetch(api('/control/output?mode=' + t)); showToast('Output: ' + t.toUpperCase()); tg('om');
+}
 function openBt() { const p = document.getElementById('bt-panel'); if(p.style.display === 'none') p.style.display = 'block'; else manualOut('bluetooth'); }
 function scanBt() {
+    if (playMode === 'browser') { showToast('BT only in Device Mode'); return; }
     const l = document.getElementById('bt-list'); l.innerHTML = '<div style="color:#888;padding:4px;">Scanning...</div>';
     fetch(api('/bt/scan')).then(r => r.json()).then(d => {
         l.innerHTML = ''; if(!d.length) { l.innerHTML = '<div style="color:#666;font-size:0.7rem;">No devices</div>'; return; }
@@ -512,10 +532,29 @@ function scanBt() {
 }
 
 // ====== CROSSFEED & BITPERFECT ======
-function checkBitPerfect() { fetch(api('/get_bitperfect')).then(r => r.json()).then(d => { const dot = document.getElementById('bp-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-bp'); if(btn) btn.classList.toggle('active', d.active); }); }
-function toggleBitPerfect() { fetch(api('/control/bitperfect')).then(r => r.json()).then(d => { checkBitPerfect(); showToast(d.bitperfect ? 'Bit Perfect ON' : 'Bit Perfect OFF'); }); }
-function checkCrossfeed() { fetch(api('/get_crossfeed')).then(r => r.json()).then(d => { const dot = document.getElementById('xf-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-xf'); if(btn) btn.classList.toggle('active', d.active); }); }
-function toggleCrossfeed() { const btn = document.getElementById('btn-xf'); const state = btn.classList.contains('active') ? 'off' : 'on'; fetch(api('/control/crossfeed?state=' + state)).then(() => { checkCrossfeed(); showToast(state === 'on' ? 'Crossfeed ON' : 'Crossfeed OFF'); }); }
+function checkBitPerfect() {
+    if (playMode === 'browser') return;
+    fetch(api('/get_bitperfect')).then(r => r.json()).then(d => {
+        const dot = document.getElementById('bp-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none';
+        const btn = document.getElementById('btn-bp'); if(btn) btn.classList.toggle('active', d.active);
+    });
+}
+function toggleBitPerfect() {
+    if (playMode === 'browser') { showToast('BitPerfect only in Device Mode'); return; }
+    fetch(api('/control/bitperfect')).then(r => r.json()).then(d => { checkBitPerfect(); showToast(d.bitperfect ? 'Bit Perfect ON' : 'Bit Perfect OFF'); });
+}
+function checkCrossfeed() {
+    if (playMode === 'browser') return;
+    fetch(api('/get_crossfeed')).then(r => r.json()).then(d => {
+        const dot = document.getElementById('xf-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none';
+        const btn = document.getElementById('btn-xf'); if(btn) btn.classList.toggle('active', d.active);
+    });
+}
+function toggleCrossfeed() {
+    if (playMode === 'browser') { showToast('Crossfeed only in Device Mode'); return; }
+    const btn = document.getElementById('btn-xf'); const state = btn.classList.contains('active') ? 'off' : 'on';
+    fetch(api('/control/crossfeed?state=' + state)).then(() => { checkCrossfeed(); showToast(state === 'on' ? 'Crossfeed ON' : 'Crossfeed OFF'); });
+}
 
 // ====== LIBRARY ======
 function initPath() { fetch(api('/library/tracks')).then(r => r.json()).then(t => { if(t && t.length) loadLibraryDB(); }).catch(() => {}); }
@@ -525,7 +564,7 @@ function switchTab(t) {
     document.getElementById('tab-' + t).classList.add('active');
     document.querySelectorAll('#pm .tab-content').forEach(c => c.classList.remove('active'));
     document.getElementById('content-' + t).classList.add('active');
-    if(t === 'files') loadLocalFiles('/root/music');
+    if(t === 'files') loadLocalFiles(playMode === 'browser' ? '/root/music' : '/root/music');
     if(t === 'saved') loadSavedPlaylists();
     if(t === 'queue') loadQueue();
 }
@@ -559,6 +598,7 @@ function uploadFiles(e) {
     });
 }
 function scanLibrary() {
+    if (playMode === 'browser') { showToast('Library scan only in Device Mode'); return; }
     const s = document.getElementById('scan-status'); s.textContent = 'Scanning...';
     fetch(api('/library/scan')).then(() => {
         const iv = setInterval(() => {
@@ -713,12 +753,21 @@ function initPresets() {
         const b = document.createElement('button'); b.className = 'preset-btn' + (settings.active_preset === n ? ' active' : ''); b.textContent = n;
         b.onclick = () => {
             settings.active_preset = n;
-            fetch(api('/control/preset?name=' + n)).then(r => r.json()).then(d => { for(let k in d) settings[k] = d[k]; updateUI(); if(playMode === 'browser' && audioInitialized) updateWebAudioEQ(); tg('pr-om'); showToast('EQ: ' + n); });
+            // Apply preset locally for both modes
+            fetch(api('/control/preset?name=' + n)).catch(() => {}).then(r => r ? r.json() : null).then(d => {
+                if (d) { for(let k in d) settings[k] = d[k]; }
+                updateUI();
+                if (playMode === 'browser' && audioInitialized) updateWebAudioEQ();
+                tg('pr-om'); showToast('EQ: ' + n);
+            });
         };
         c.appendChild(b);
     });
 }
-function setTimer(m) { fetch(api('/system/timer?min=' + m)).then(() => showToast(m > 0 ? 'Sleep ' + m + 'm' : 'Timer Off')); }
+function setTimer(m) {
+    if (playMode === 'browser') { showToast('Timer only in Device Mode'); return; }
+    fetch(api('/system/timer?min=' + m)).then(() => showToast(m > 0 ? 'Sleep ' + m + 'm' : 'Timer Off'));
+}
 
 // ====== PLAYLIST ======
 async function addPl() {
