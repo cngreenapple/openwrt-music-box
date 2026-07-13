@@ -1,9 +1,9 @@
-// OwrtBox Player - COREv9 (WebAudio Restored - One-time init)
+// OwrtBox Player - COREv10 (Dual Server Mode)
 let browserAudio = null, isSeeking = false, currentLyricIndex = -1;
 let lastFrameTime = performance.now(), globalTime = 0, isPlaying = false, totalDuration = 0;
 let activeKnob = null, activeKnobRect = null, volTimer = null, eqTimer = null, balTimeout = null;
 let lyricsData = [], lyricsType = '', lastLyricsTitle = '', isMuted = false;
-let audioInitialized = false; // prevent double WebAudio init
+let audioInitialized = false;
 
 // WebAudio (initialized ONCE)
 let audioCtx = null, sourceNode = null, gainNode = null, pannerNode = null;
@@ -13,9 +13,16 @@ let settings;
 try { settings = JSON.parse(localStorage.getItem('owrtmb_set')) || getDefaults(); }
 catch(e) { settings = getDefaults(); }
 
-let systemState = { powerMode: localStorage.getItem('owrtmb_power') || 'portable', playMode: localStorage.getItem('owrtmb_playmode') || 'server' };
+// SERVER CONFIG
+const DEVICE_SERVER = '';
+const BROWSER_SERVER = 'http://' + location.hostname + ':2031';
+let playMode = localStorage.getItem('owrtmb_playmode') || 'server';
+let activeServer = playMode === 'server' ? DEVICE_SERVER : BROWSER_SERVER;
 
 function getDefaults() { return { f1:0,f2:0,f3:0,f4:0,f5:0,f6:0,f7:0,f8:0,f9:0,f10:0, vol:50, active_preset:'Normal' }; }
+
+// ====== API HELPER ======
+function api(path) { return activeServer + path; }
 
 // ====== WEB AUDIO (ONE-TIME INIT) ======
 function initWebAudioOnce() {
@@ -23,19 +30,11 @@ function initWebAudioOnce() {
     audioInitialized = true;
     try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Create source from audio element - ONLY ONCE!
         sourceNode = audioCtx.createMediaElementSource(browserAudio);
-        
-        // Gain for volume
         gainNode = audioCtx.createGain();
         gainNode.gain.value = (settings.vol || 50) / 100;
-        
-        // Panner for balance
         pannerNode = audioCtx.createStereoPanner();
-        pannerNode.pan.value = 0; // center
-        
-        // Create 10-band EQ filters
+        pannerNode.pan.value = 0;
         const freqs = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
         eqFilters = [];
         for (let i = 0; i < 10; i++) {
@@ -46,49 +45,26 @@ function initWebAudioOnce() {
             filter.gain.value = settings['f' + (i+1)] || 0;
             eqFilters.push(filter);
         }
-        
-        // Connect chain: source -> gain -> filters -> panner -> destination
         sourceNode.connect(gainNode);
         if (eqFilters.length > 0) {
             gainNode.connect(eqFilters[0]);
-            for (let i = 0; i < eqFilters.length - 1; i++) {
-                eqFilters[i].connect(eqFilters[i + 1]);
-            }
+            for (let i = 0; i < eqFilters.length - 1; i++) eqFilters[i].connect(eqFilters[i + 1]);
             eqFilters[eqFilters.length - 1].connect(pannerNode);
-        } else {
-            gainNode.connect(pannerNode);
-        }
+        } else { gainNode.connect(pannerNode); }
         pannerNode.connect(audioCtx.destination);
-        
-        // Resume AudioContext if suspended (autoplay policy)
         if (audioCtx.state === 'suspended') {
-            document.addEventListener('click', () => {
-                if (audioCtx.state === 'suspended') audioCtx.resume();
-            }, { once: true });
+            document.addEventListener('click', () => { if (audioCtx.state === 'suspended') audioCtx.resume(); }, { once: true });
         }
-    } catch(e) {
-        console.log("WebAudio not supported:", e);
-        audioInitialized = false;
-    }
+    } catch(e) { console.log("WebAudio not supported:", e); audioInitialized = false; }
 }
 
 function updateWebAudioEQ() {
     if (!audioCtx || eqFilters.length === 0) return;
-    for (let i = 0; i < 10; i++) {
-        const val = settings['f' + (i+1)] || 0;
-        eqFilters[i].gain.value = val;
-    }
+    for (let i = 0; i < 10; i++) eqFilters[i].gain.value = settings['f' + (i+1)] || 0;
 }
 
-function updateWebAudioBalance(val) {
-    if (!pannerNode) return;
-    pannerNode.pan.value = val / 100;
-}
-
-function updateWebAudioVolume(v) {
-    if (!gainNode) return;
-    gainNode.gain.value = v / 100;
-}
+function updateWebAudioBalance(val) { if (pannerNode) pannerNode.pan.value = val / 100; }
+function updateWebAudioVolume(v) { if (gainNode) gainNode.gain.value = v / 100; }
 
 // ====== INIT ======
 window.onload = () => {
@@ -98,26 +74,19 @@ window.onload = () => {
         browserAudio.addEventListener('ended', onBrowserEnd);
         browserAudio.addEventListener('loadedmetadata', () => { totalDuration = browserAudio.duration; });
         browserAudio.addEventListener('error', function() {
-            const err = this.error ? this.error.message : 'unknown';
-            showToast('Audio error: ' + err);
+            showToast('Audio error: ' + (this.error ? this.error.message : 'unknown'));
         });
-        // Init WebAudio once on first user interaction
-        document.addEventListener('click', initWebAudioOnce, { once: true });
-        // Also init on first play
         browserAudio.addEventListener('play', () => {
-            if (!audioInitialized) {
-                initWebAudioOnce();
-            } else if (audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
+            if (!audioInitialized) { initWebAudioOnce(); }
+            else if (audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
         }, { once: true });
+        document.addEventListener('click', initWebAudioOnce, { once: true });
     }
-
     updateUI(); setupKnobs(); checkBitPerfect(); checkCrossfeed(); initPath();
     initVol(); initKeyboard();
 
-    document.getElementById('mode-' + systemState.playMode).classList.add('active');
-    if(systemState.playMode === 'browser') document.getElementById('mode-device').classList.remove('active');
+    document.getElementById('mode-' + playMode).classList.add('active');
+    if(playMode === 'browser') document.getElementById('mode-device').classList.remove('active');
 
     const pb = document.getElementById('pb');
     if(pb) {
@@ -126,17 +95,14 @@ window.onload = () => {
         pb.addEventListener('change', (e) => {
             isSeeking = false; const p = parseFloat(e.target.value);
             globalTime = (p / 100) * totalDuration;
-            if(systemState.playMode === 'browser' && browserAudio) browserAudio.currentTime = globalTime;
-            else fetch('/control/seek?val=' + p);
+            if(playMode === 'browser' && browserAudio) browserAudio.currentTime = globalTime;
+            else fetch(api('/control/seek?val=' + p));
         });
     }
-
     if(localStorage.getItem('owrtmb_theme') === 'light') document.body.classList.add('light');
     if(localStorage.getItem('owrtmb_muted') === 'true') { isMuted = true; updateMuteBtn(); }
-
     const bs = document.getElementById('balanceSlider');
     if(bs) bs.addEventListener('input', () => updateBalance(parseInt(bs.value)));
-
     const vs = document.getElementById('vol-slider');
     if(vs) {
         vs.value = settings.vol || 50;
@@ -145,13 +111,12 @@ window.onload = () => {
             const v = parseInt(vs.value);
             settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
             document.getElementById('vol-val').textContent = v + '%';
-            if(systemState.playMode === 'browser') {
+            if(playMode === 'browser') {
                 if(browserAudio) browserAudio.volume = v / 100;
                 updateWebAudioVolume(v);
-            } else fetch('/control/volume?val=' + v);
+            } else fetch(api('/control/volume?val=' + v));
         });
     }
-
     startLoop();
     setInterval(pollStatus, 1000);
 };
@@ -176,10 +141,10 @@ function changeVol(delta) {
     settings.vol = v; localStorage.setItem('owrtmb_set', JSON.stringify(settings));
     document.getElementById('vol-slider').value = v;
     document.getElementById('vol-val').textContent = v + '%';
-    if(systemState.playMode === 'browser') {
+    if(playMode === 'browser') {
         if(browserAudio) browserAudio.volume = v / 100;
         updateWebAudioVolume(v);
-    } else fetch('/control/volume?val=' + v);
+    } else fetch(api('/control/volume?val=' + v));
 }
 
 // ====== MUTE ======
@@ -188,10 +153,10 @@ function toggleMute() {
     localStorage.setItem('owrtmb_muted', isMuted ? 'true' : 'false');
     updateMuteBtn();
     const vol = isMuted ? 0 : (settings.vol || 50);
-    if(systemState.playMode === 'browser') {
+    if(playMode === 'browser') {
         if(browserAudio) browserAudio.volume = vol / 100;
         updateWebAudioVolume(vol);
-    } else fetch('/control/volume?val=' + vol);
+    } else fetch(api('/control/volume?val=' + vol));
 }
 function updateMuteBtn() {
     const btn = document.getElementById('btn-mute');
@@ -203,8 +168,8 @@ function updateMuteBtn() {
 // ====== RADIO ======
 function playRadio(url) {
     if(!url) return; tg('radio');
-    if(systemState.playMode === 'server') setPlayMode('browser');
-    playBrowserAudio('/radio_proxy?url=' + encodeURIComponent(url), 'Radio Stream');
+    if(playMode === 'server') switchPlayMode('browser');
+    playBrowserAudio(api('/radio_proxy?url=' + encodeURIComponent(url)), 'Radio Stream');
     setText('tit', 'Radio Stream'); setText('art', 'Live Stream'); setText('tech-specs', 'STREAMING');
     updateModeIndicator();
 }
@@ -234,17 +199,12 @@ function onBrowserTime() {
         setText('t-cur', fmtTime(globalTime)); setText('t-tot', fmtTime(totalDuration));
     }
 }
-function onBrowserEnd() { if(systemState.playMode === 'browser') nextBrowserTrack(); }
+function onBrowserEnd() { if(playMode === 'browser') nextBrowserTrack(); }
 
-// RELIABLE AUDIO PLAY - just change src, WebAudio follows automatically
 function playBrowserAudio(src, title) {
     if(!browserAudio) return;
-    // WebAudio MediaElementSource is already connected to browserAudio
-    // Just changing the src is safe - no need to re-create anything
     browserAudio.src = src;
     browserAudio.volume = (settings.vol || 50) / 100;
-    
-    // Set display info: parse "Artist - Title" format
     let displayTitle = title || 'Unknown';
     let displayArtist = 'Playing';
     if (displayTitle.includes(' - ')) {
@@ -255,34 +215,25 @@ function playBrowserAudio(src, title) {
     setText('tit', displayTitle);
     setText('art', displayArtist);
     setText('tech-specs', 'STREAMING');
-    
     document.body.classList.add('playing');
     isPlaying = true;
     updatePlayBtn();
-    
     const promise = browserAudio.play();
-    if (promise) {
-        promise.catch((e) => {
-            if (e.name === 'NotAllowedError') {
-                showToast('Tap to play');
-                document.addEventListener('click', () => {
-                    browserAudio.play().catch(() => {});
-                }, { once: true });
-            } else {
-                showToast('Play: ' + e.message);
-            }
-        });
-    }
+    if (promise) promise.catch((e) => {
+        if (e.name === 'NotAllowedError') {
+            showToast('Tap to play');
+            document.addEventListener('click', () => { browserAudio.play().catch(() => {}); }, { once: true });
+        } else showToast('Play: ' + e.message);
+    });
 }
 
 function nextBrowserTrack() {
-    fetch('/play/next_browser').then(r => r.json()).then(d => {
+    fetch(api('/play/next_browser')).then(r => r.json()).then(d => {
         if(d.index >= 0) {
-            const src = d.link.includes('youtube') || d.link.includes('youtu.be') 
-                ? '/youtube_proxy?url=' + encodeURIComponent(d.link)
-                : '/stream?path=' + encodeURIComponent(d.link);
+            const src = d.link.includes('youtube') || d.link.includes('youtu.be')
+                ? api('/youtube_proxy?url=' + encodeURIComponent(d.link))
+                : api('/stream?path=' + encodeURIComponent(d.link));
             playBrowserAudio(src, d.title);
-            if(d.thumb) document.getElementById('cover-img').src = d.thumb;
             updateMiniQueue();
         } else {
             isPlaying = false; updatePlayBtn(); document.body.classList.remove('playing');
@@ -292,64 +243,52 @@ function nextBrowserTrack() {
 
 // ====== PLAY ======
 function togglePlay() {
-    if(systemState.playMode === 'browser') {
-        if(isPlaying) { 
-            browserAudio.pause(); isPlaying = false; updatePlayBtn();
-            document.body.classList.remove('playing');
-        }
+    if(playMode === 'browser') {
+        if(isPlaying) { browserAudio.pause(); isPlaying = false; updatePlayBtn(); document.body.classList.remove('playing'); }
         else {
-            // Just resume playback without changing src
             if (browserAudio && browserAudio.src && browserAudio.src !== '') {
-                const promise = browserAudio.play();
-                if (promise) promise.catch((e) => {
-                    if (e.name === 'NotAllowedError') {
-                        showToast('Tap to play');
-                        document.addEventListener('click', () => { browserAudio.play().catch(() => {}); }, { once: true });
-                    }
-                });
-                isPlaying = true; updatePlayBtn();
-                document.body.classList.add('playing');
+                browserAudio.play().catch(() => {}); isPlaying = true; updatePlayBtn(); document.body.classList.add('playing');
             } else {
-                // No source loaded, get from backend
-                fetch('/play/current').then(r => r.json()).then(d => {
+                fetch(api('/play/current')).then(r => r.json()).then(d => {
                     if(d.index >= 0 && d.link) {
                         const src = d.link.includes('youtube') || d.link.includes('youtu.be')
-                            ? '/youtube_proxy?url=' + encodeURIComponent(d.link)
-                            : '/stream?path=' + encodeURIComponent(d.link);
+                            ? api('/youtube_proxy?url=' + encodeURIComponent(d.link))
+                            : api('/stream?path=' + encodeURIComponent(d.link));
                         playBrowserAudio(src, d.title);
                     }
                 });
             }
         }
     } else {
-        fetch('/control/pause').then(() => {
+        fetch(api('/control/pause')).then(() => {
             isPlaying = !isPlaying; updatePlayBtn(); document.body.classList.toggle('playing', isPlaying);
         });
     }
 }
 function updatePlayBtn() { const btn = document.getElementById('pi'); if(btn) btn.className = isPlaying ? 'fa-solid fa-pause' : 'fa-solid fa-play'; }
 
-// ====== MODE & INDICATOR ======
+// ====== MODE ======
 function updateModeIndicator() {
     const mi = document.getElementById('mode-indicator');
     if(!mi) return;
-    const isServer = systemState.playMode === 'server';
-    mi.innerHTML = isServer ? '<i class="fa-solid fa-server"></i> Device Mode' : '<i class="fa-solid fa-desktop"></i> Browser Mode';
-    mi.style.color = isServer ? 'var(--accent)' : 'var(--dim)';
+    const isSrv = playMode === 'server';
+    mi.innerHTML = isSrv ? '<i class="fa-solid fa-server"></i> Device Mode' : '<i class="fa-solid fa-desktop"></i> Browser Mode';
+    mi.style.color = isSrv ? 'var(--accent)' : 'var(--dim)';
 }
 
-function setPlayMode(mode) {
-    systemState.playMode = mode; localStorage.setItem('owrtmb_playmode', mode);
+function switchPlayMode(mode) {
+    playMode = mode;
+    localStorage.setItem('owrtmb_playmode', mode);
+    activeServer = mode === 'server' ? DEVICE_SERVER : BROWSER_SERVER;
     document.getElementById('mode-device').classList.toggle('active', mode === 'server');
     document.getElementById('mode-browser').classList.toggle('active', mode === 'browser');
-    fetch('/play/mode?mode=' + mode);
     if(mode === 'browser' && browserAudio) browserAudio.pause();
     updateModeIndicator();
 }
 
 function togglePlayMode() {
-    const newMode = systemState.playMode === 'server' ? 'browser' : 'server';
-    setPlayMode(newMode);
+    const newMode = playMode === 'server' ? 'browser' : 'server';
+    switchPlayMode(newMode);
     showToast('Mode: ' + (newMode === 'server' ? 'Device (MPV)' : 'Browser'));
 }
 
@@ -369,7 +308,7 @@ function onDrag(e) {
     if(!activeKnob || !activeKnobRect) return;
     const type = activeKnob.dataset.type;
     const cx = activeKnobRect.left + activeKnobRect.width / 2, cy = activeKnobRect.top + activeKnobRect.height / 2;
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - cx, y = (e.touches ? e.touches[0].clientY : e.clientY) - cy;
+    let x = (e.touches ? e.touches[0].clientX : e.clientX) - cx, y = (e.touches ? e.touches[0].clientY : e.clientY) - cy;
     let deg = Math.atan2(y, x) * (180 / Math.PI) + 90; if(deg < 0) deg += 360;
     if(type === 'vol') return;
     let p = 0; if(deg >= 210) p = (deg - 210) / 300; else if(deg <= 150) p = (150 + deg) / 300; else p = (Math.abs(deg - 210) < Math.abs(deg - 150)) ? 0 : 1;
@@ -384,11 +323,9 @@ function updateUI() {
 function sendEq() {
     if(eqTimer) clearTimeout(eqTimer);
     eqTimer = setTimeout(() => {
-        if (systemState.playMode === 'browser' && audioInitialized) {
-            updateWebAudioEQ();
-        }
+        if (playMode === 'browser' && audioInitialized) updateWebAudioEQ();
         let q = []; for(let i = 1; i <= 10; i++) q.push('f' + i + '=' + (settings['f' + i] || 0));
-        fetch('/control/eq?' + q.join('&'));
+        fetch(api('/control/eq?' + q.join('&')));
     }, 100);
 }
 
@@ -396,18 +333,18 @@ function sendEq() {
 function ctl(action) {
     if(action === 'pause') togglePlay();
     else if(action === 'prev') {
-        if(systemState.playMode === 'browser') {
+        if(playMode === 'browser') {
             if(globalTime > 3) { globalTime = 0; if(browserAudio) browserAudio.currentTime = 0; }
             else {
-                fetch('/play/current').then(r => r.json()).then(cur => {
+                fetch(api('/play/current')).then(r => r.json()).then(cur => {
                     if (cur.index > 0) {
-                        fetch('/browser_play?url=' + encodeURIComponent(cur.link) + '&mode=play_now&title=' + encodeURIComponent(cur.title));
+                        fetch(api('/browser_play?url=' + encodeURIComponent(cur.link) + '&mode=play_now&title=' + encodeURIComponent(cur.title)));
                         setTimeout(() => {
-                            fetch('/play/current').then(r2 => r2.json()).then(prev => {
+                            fetch(api('/play/current')).then(r => r.json()).then(prev => {
                                 if (prev.index >= 0 && prev.link) {
                                     const src = prev.link.includes('youtube') || prev.link.includes('youtu.be')
-                                        ? '/youtube_proxy?url=' + encodeURIComponent(prev.link)
-                                        : '/stream?path=' + encodeURIComponent(prev.link);
+                                        ? api('/youtube_proxy?url=' + encodeURIComponent(prev.link))
+                                        : api('/stream?path=' + encodeURIComponent(prev.link));
                                     playBrowserAudio(src, prev.title);
                                 }
                             });
@@ -415,14 +352,14 @@ function ctl(action) {
                     } else if(browserAudio) { browserAudio.currentTime = 0; }
                 });
             }
-        } else fetch('/control/prev');
+        } else fetch(api('/control/prev'));
     }
     else if(action === 'next') {
-        if(systemState.playMode === 'browser') nextBrowserTrack();
-        else fetch('/control/next');
+        if(playMode === 'browser') nextBrowserTrack();
+        else fetch(api('/control/next'));
     }
-    else if(action === 'shuffle') fetch('/control/shuffle').then(() => showToast('Shuffled'));
-    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.src = ''; } fetch('/control/stop'); }
+    else if(action === 'shuffle') fetch(api('/control/shuffle')).then(() => showToast('Shuffled'));
+    else if(action === 'stop') { if(browserAudio) { browserAudio.pause(); browserAudio.src = ''; } fetch(api('/control/stop')); }
     if(['shuffle', 'prev', 'next'].includes(action)) setTimeout(() => { loadQueue(); updateMiniQueue(); }, 500);
 }
 
@@ -431,8 +368,9 @@ function searchYt(e) {
     if(e) e.preventDefault();
     const q = document.getElementById('searchInput').value; if(!q) return;
     const popup = document.getElementById('search-popup'); popup.classList.add('show');
-    const c = document.getElementById('popup-content'); c.innerHTML = '<div style="padding:20px;text-align:center;color:#888;">Searching...</div>';
-    fetch('/search?q=' + encodeURIComponent(q)).then(r => r.json()).then(data => {
+    const c = document.getElementById('popup-content');
+    c.innerHTML = '<div style="padding:20px;text-align:center;color:#888;">Searching...</div>';
+    fetch(api('/search?q=' + encodeURIComponent(q))).then(r => r.json()).then(data => {
         c.innerHTML = ''; if(!data.length) { c.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">No results</div>'; return; }
         data.forEach(v => {
             const row = document.createElement('div'); row.className = 'lib-item';
@@ -449,20 +387,18 @@ function searchYt(e) {
 function closeSearch() { document.getElementById('search-popup').classList.remove('show'); }
 
 function playSong(url, mode = 'play_now', title = '') {
-    // Browser mode: use /browser_play (no mpv). Server mode: use /play (starts mpv)
-    const endpoint = systemState.playMode === 'browser' ? '/browser_play' : '/play';
-    fetch(`${endpoint}?url=${encodeURIComponent(url)}&mode=${mode}&title=${encodeURIComponent(title)}`).then(r => r.json()).then(d => {
+    const endpoint = playMode === 'browser' ? api('/browser_play') : api('/play');
+    fetch(endpoint + '?url=' + encodeURIComponent(url) + '&mode=' + mode + '&title=' + encodeURIComponent(title)).then(r => r.json()).then(d => {
         if(mode === 'play_now') {
             document.body.classList.add('playing'); showToast('▶ ' + (title || 'Track'));
-            if(systemState.playMode === 'browser') {
+            if(playMode === 'browser') {
                 setTimeout(() => {
-                    fetch('/play/current').then(r => r.json()).then(p => {
+                    fetch(api('/play/current')).then(r => r.json()).then(p => {
                         if(p.link) {
                             const src = p.link.includes('youtube') || p.link.includes('youtu.be')
-                                ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
-                                : '/stream?path=' + encodeURIComponent(p.link);
+                                ? api('/youtube_proxy?url=' + encodeURIComponent(p.link))
+                                : api('/stream?path=' + encodeURIComponent(p.link));
                             playBrowserAudio(src, p.title || title);
-                            if(p.thumb) document.getElementById('cover-img').src = p.thumb;
                         }
                     });
                 }, 300);
@@ -474,16 +410,14 @@ function playSong(url, mode = 'play_now', title = '') {
 
 // ====== STATUS POLL ======
 function pollStatus() {
-    fetch('/status').then(r => r.json()).then(d => {
-        // In browser mode, don't overwrite metadata with backend defaults (no mpv running)
-        if (systemState.playMode !== 'browser') {
+    fetch(api('/status')).then(r => r.json()).then(d => {
+        if (playMode !== 'browser') {
             setText('tit', d.title || 'Ready');
             setText('art', d.artist || 'OwrtBox');
             setText('tech-specs', d.tech_info || 'AWAITING SIGNAL');
         }
-
         const vs = document.getElementById('vol-slider');
-        if(vs && d.volume !== undefined && systemState.playMode !== 'browser') {
+        if(vs && d.volume !== undefined && playMode !== 'browser') {
             const sv = parseInt(d.volume);
             if(!isMuted && vs.value != sv) {
                 vs.value = sv;
@@ -491,34 +425,20 @@ function pollStatus() {
                 settings.vol = sv;
             }
         }
-
-        if(d.current_time !== undefined && Math.abs(globalTime - d.current_time) > 0.5) {
-            globalTime = d.current_time;
-        }
+        if(d.current_time !== undefined && Math.abs(globalTime - d.current_time) > 0.5) globalTime = d.current_time;
         if(d.total_time) totalDuration = d.total_time;
         setText('t-tot', fmtTime(totalDuration));
-
         ['genre', 'year'].forEach(id => {
             const el = document.getElementById(id);
             if(el) { el.textContent = d[id] || ''; el.style.display = d[id] ? 'inline-flex' : 'none'; }
         });
-
-        if(systemState.playMode !== 'browser') {
-            if(d.status === 'playing' && !isPlaying) {
-                isPlaying = true; updatePlayBtn();
-                document.body.classList.add('playing');
-                document.getElementById('cover-img').classList.add('spin');
-            } else if(d.status !== 'playing' && isPlaying) {
-                isPlaying = false; updatePlayBtn();
-                document.body.classList.remove('playing');
-                document.getElementById('cover-img').classList.remove('spin');
-            }
+        if(playMode !== 'browser') {
+            if(d.status === 'playing' && !isPlaying) { isPlaying = true; updatePlayBtn(); document.body.classList.add('playing'); document.getElementById('cover-img').classList.add('spin'); }
+            else if(d.status !== 'playing' && isPlaying) { isPlaying = false; updatePlayBtn(); document.body.classList.remove('playing'); document.getElementById('cover-img').classList.remove('spin'); }
         }
-
         const ci = document.getElementById('cover-img');
         if(ci && d.thumb && ci.src !== d.thumb) ci.src = d.thumb;
         else if(ci && !d.thumb && !ci.src.includes('default.png')) ci.src = '/static/img/default.png';
-        
         updateMiniQueue();
     }).catch(() => {});
 }
@@ -551,7 +471,7 @@ function fetchLyrics() {
     const c = document.getElementById('lyrics-container'); const t = document.getElementById('tit').innerText;
     c.innerHTML = '<div style="margin-top:20px;color:#888;">Searching...</div>';
     if(t === 'Ready') { c.innerHTML = '<div style="margin-top:50px;color:#666;">Play music</div>'; return; }
-    fetch('/get_lyrics').then(r => r.json()).then(d => {
+    fetch(api('/get_lyrics')).then(r => r.json()).then(d => {
         lastLyricsTitle = t; lyricsData = [];
         if(d.error) { c.innerHTML = '<div style="margin-top:50px;color:#888;">Not found</div>'; return; }
         lyricsType = d.type;
@@ -560,36 +480,45 @@ function fetchLyrics() {
     }).catch(() => { c.innerHTML = '<div style="margin-top:50px;color:red;">Error</div>'; });
 }
 function parseLRC(t) { lyricsData = []; t.split('\n').forEach(line => { const m = line.match(/^\[(\d{2}):(\d{2}\.\d{2})\](.*)/); if(m) { const text = m[3].trim(); if(text) lyricsData.push({ time: parseInt(m[1]) * 60 + parseFloat(m[2]), text }); } }); }
-function renderLyrics() { const c = document.getElementById('lyrics-container'); c.innerHTML = ''; currentLyricIndex = -1; lyricsData.forEach((l, i) => { const d = document.createElement('div'); d.className = 'lyric-line'; d.id = 'line-' + i; d.innerText = l.text; d.onclick = () => { fetch('/control/seek?val=' + ((l.time / totalDuration) * 100)); globalTime = l.time; }; c.appendChild(d); }); }
+function renderLyrics() { const c = document.getElementById('lyrics-container'); c.innerHTML = ''; currentLyricIndex = -1; lyricsData.forEach((l, i) => { const d = document.createElement('div'); d.className = 'lyric-line'; d.id = 'line-' + i; d.innerText = l.text; d.onclick = () => { globalTime = l.time; }; c.appendChild(d); }); }
 function syncLyrics(t) { if(!document.getElementById('lym').classList.contains('active') || lyricsType !== 'synced') return; let idx = -1; for(let i = lyricsData.length - 1; i >= 0; i--) { if(t >= lyricsData[i].time) { idx = i; break } } if(idx !== currentLyricIndex) { const prev = document.getElementById('line-' + currentLyricIndex); if(prev) prev.classList.remove('active'); currentLyricIndex = idx; const act = document.getElementById('line-' + idx); if(act) { act.classList.add('active'); const cont = document.getElementById('lyrics-container'); cont.scrollTo({ top: act.offsetTop - cont.clientHeight / 2 + act.offsetHeight / 2, behavior: 'smooth' }); } } }
 
 // ====== BALANCE ======
 function updateBalance(val) {
-    if (systemState.playMode === 'browser' && audioInitialized) {
-        updateWebAudioBalance(val);
-    }
+    if (playMode === 'browser' && audioInitialized) updateWebAudioBalance(val);
     if(balTimeout) clearTimeout(balTimeout);
     balTimeout = setTimeout(() => {
         let l = 1.0, r = 1.0;
-        if(val < 0) r = 1 - (Math.abs(val) / 100);
-        else if(val > 0) l = 1 - (val / 100);
-        fetch('/control/balance?l=' + l.toFixed(2) + '&r=' + r.toFixed(2));
+        if(val < 0) r = 1 - (Math.abs(val) / 100); else if(val > 0) l = 1 - (val / 100);
+        fetch(api('/control/balance?l=' + l.toFixed(2) + '&r=' + r.toFixed(2)));
     }, 100);
 }
 
 // ====== OUTPUT ======
-function manualOut(t) { fetch('/control/output?mode=' + t); showToast('Output: ' + t.toUpperCase()); tg('om'); }
+function manualOut(t) { fetch(api('/control/output?mode=' + t)); showToast('Output: ' + t.toUpperCase()); tg('om'); }
 function openBt() { const p = document.getElementById('bt-panel'); if(p.style.display === 'none') p.style.display = 'block'; else manualOut('bluetooth'); }
-function scanBt() { const l = document.getElementById('bt-list'); l.innerHTML = '<div style="color:#888;padding:4px;">Scanning...</div>'; fetch('/bt/scan').then(r => r.json()).then(d => { l.innerHTML = ''; if(!d.length) { l.innerHTML = '<div style="color:#666;font-size:0.7rem;">No devices</div>'; return; } d.forEach(dev => { const r = document.createElement('div'); r.style.cssText = 'padding:6px 0;display:flex;justify-content:space-between;cursor:pointer;font-size:0.7rem;border-bottom:1px solid rgba(255,255,255,0.04);'; r.innerHTML = '<span>' + dev.name + '</span><small style="color:#888;">' + dev.mac + '</small>'; r.onclick = () => { fetch('/bt/connect?mac=' + dev.mac).then(r => r.json()).then(d2 => { if(d2.status === 'ok') showToast('BT: ' + d2.name); }) }; l.appendChild(r); }); }); }
+function scanBt() {
+    const l = document.getElementById('bt-list'); l.innerHTML = '<div style="color:#888;padding:4px;">Scanning...</div>';
+    fetch(api('/bt/scan')).then(r => r.json()).then(d => {
+        l.innerHTML = ''; if(!d.length) { l.innerHTML = '<div style="color:#666;font-size:0.7rem;">No devices</div>'; return; }
+        d.forEach(dev => {
+            const r = document.createElement('div');
+            r.style.cssText = 'padding:6px 0;display:flex;justify-content:space-between;cursor:pointer;font-size:0.7rem;border-bottom:1px solid rgba(255,255,255,0.04);';
+            r.innerHTML = '<span>' + dev.name + '</span><small style="color:#888;">' + dev.mac + '</small>';
+            r.onclick = () => { fetch(api('/bt/connect?mac=' + dev.mac)).then(r => r.json()).then(d2 => { if(d2.status === 'ok') showToast('BT: ' + d2.name); }) };
+            l.appendChild(r);
+        });
+    });
+}
 
 // ====== CROSSFEED & BITPERFECT ======
-function checkBitPerfect() { fetch('/get_bitperfect').then(r => r.json()).then(d => { const dot = document.getElementById('bp-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-bp'); if(btn) btn.classList.toggle('active', d.active); }); }
-function toggleBitPerfect() { fetch('/control/bitperfect').then(r => r.json()).then(d => { checkBitPerfect(); showToast(d.bitperfect ? 'Bit Perfect ON' : 'Bit Perfect OFF'); }); }
-function checkCrossfeed() { fetch('/get_crossfeed').then(r => r.json()).then(d => { const dot = document.getElementById('xf-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-xf'); if(btn) btn.classList.toggle('active', d.active); }); }
-function toggleCrossfeed() { const btn = document.getElementById('btn-xf'); const state = btn.classList.contains('active') ? 'off' : 'on'; fetch('/control/crossfeed?state=' + state).then(() => { checkCrossfeed(); showToast(state === 'on' ? 'Crossfeed ON' : 'Crossfeed OFF'); }); }
+function checkBitPerfect() { fetch(api('/get_bitperfect')).then(r => r.json()).then(d => { const dot = document.getElementById('bp-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-bp'); if(btn) btn.classList.toggle('active', d.active); }); }
+function toggleBitPerfect() { fetch(api('/control/bitperfect')).then(r => r.json()).then(d => { checkBitPerfect(); showToast(d.bitperfect ? 'Bit Perfect ON' : 'Bit Perfect OFF'); }); }
+function checkCrossfeed() { fetch(api('/get_crossfeed')).then(r => r.json()).then(d => { const dot = document.getElementById('xf-dot'); if(dot) dot.style.display = d.active ? 'block' : 'none'; const btn = document.getElementById('btn-xf'); if(btn) btn.classList.toggle('active', d.active); }); }
+function toggleCrossfeed() { const btn = document.getElementById('btn-xf'); const state = btn.classList.contains('active') ? 'off' : 'on'; fetch(api('/control/crossfeed?state=' + state)).then(() => { checkCrossfeed(); showToast(state === 'on' ? 'Crossfeed ON' : 'Crossfeed OFF'); }); }
 
 // ====== LIBRARY ======
-function initPath() { fetch('/library/tracks').then(r => r.json()).then(t => { if(t && t.length) loadLibraryDB(); }).catch(() => {}); }
+function initPath() { fetch(api('/library/tracks')).then(r => r.json()).then(t => { if(t && t.length) loadLibraryDB(); }).catch(() => {}); }
 function openLibrary() { tg('pm'); }
 function switchTab(t) {
     document.querySelectorAll('#pm .tab-btn').forEach(b => b.classList.remove('active'));
@@ -603,7 +532,7 @@ function switchTab(t) {
 async function loadLocalFiles(path) {
     const l = document.getElementById('lib-list'); l.innerHTML = '<div style="text-align:center;padding:20px;color:#888;"><i class="fa-solid fa-spinner fa-spin"></i></div>';
     try {
-        const items = await (await fetch('/get_files?path=' + encodeURIComponent(path))).json();
+        const items = await (await fetch(api('/get_files?path=' + encodeURIComponent(path)))).json();
         l.innerHTML = ''; if(items.length === 0) { l.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">Empty</div>'; return; }
         items.forEach(item => {
             const row = document.createElement('div'); row.className = 'lib-item';
@@ -623,7 +552,7 @@ function uploadFiles(e) {
     Array.from(files).forEach((file, i) => {
         status.textContent = 'Uploading ' + (i + 1) + '/' + files.length + '...';
         const form = new FormData(); form.append('file', file);
-        fetch('/upload', { method: 'POST', body: form }).then(r => r.json()).then(d => {
+        fetch(api('/upload'), { method: 'POST', body: form }).then(r => r.json()).then(d => {
             if(d.status === 'ok') { showToast('Uploaded: ' + file.name); if(i === files.length - 1) { status.textContent = 'Upload complete'; loadLocalFiles('/root/uploads'); } }
             else showToast('Upload failed: ' + file.name);
         }).catch(() => showToast('Upload error: ' + file.name));
@@ -631,9 +560,9 @@ function uploadFiles(e) {
 }
 function scanLibrary() {
     const s = document.getElementById('scan-status'); s.textContent = 'Scanning...';
-    fetch('/library/scan').then(() => {
+    fetch(api('/library/scan')).then(() => {
         const iv = setInterval(() => {
-            fetch('/library/status').then(r => r.json()).then(d => {
+            fetch(api('/library/status')).then(r => r.json()).then(d => {
                 if(d.scanning) s.textContent = d.progress + '%';
                 else { clearInterval(iv); s.textContent = d.total + ' Tracks'; showToast('Library Updated!'); loadLibraryDB(); }
             });
@@ -643,7 +572,7 @@ function scanLibrary() {
 async function loadLibraryDB() {
     const l = document.getElementById('lib-list'); l.innerHTML = '<div style="text-align:center;padding:20px;color:#666;"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
     try {
-        const tracks = await (await fetch('/library/tracks')).json();
+        const tracks = await (await fetch(api('/library/tracks'))).json();
         l.innerHTML = ''; if(!tracks.length) { l.innerHTML = '<div style="padding:30px;text-align:center;color:#666;">Empty</div>'; return; }
         tracks.forEach(t => {
             const r = document.createElement('div'); r.className = 'lib-item'; r.dataset.meta = (t.name + ' ' + t.artist + ' ' + t.album).toLowerCase();
@@ -659,74 +588,50 @@ async function loadLibraryDB() {
 }
 function filterLibraryLocal(q) { const ql = q.toLowerCase(); document.querySelectorAll('#lib-list .lib-item').forEach(r => { r.style.display = (r.dataset.meta || '').includes(ql) ? 'flex' : 'none'; }); }
 
-// ====== PLAYLIST POPUP (Dashboard) ======
+// ====== PLAYLIST POPUP ======
 function togglePlaylistPopup() {
     const popup = document.getElementById('pl-popup');
     if (!popup) return;
-    if (popup.classList.contains('active')) {
-        popup.classList.remove('active');
-        popup.style.display = 'none';
-    } else {
-        popup.style.display = 'flex';
-        void popup.offsetWidth;
-        popup.classList.add('active');
-        initPlaylistPopup();
-    }
+    if (popup.classList.contains('active')) { popup.classList.remove('active'); popup.style.display = 'none'; }
+    else { popup.style.display = 'flex'; void popup.offsetWidth; popup.classList.add('active'); initPlaylistPopup(); }
 }
-
 function initPlaylistPopup() {
     const container = document.getElementById('playlist-popup-content');
     if (!container) return;
-    container.innerHTML = '<div style="text-align:center;padding:20px;color:#888;"><i class="fa-solid fa-spinner fa-spin"></i></div>';
-    fetch('/queue/list').then(r => r.json()).then(d => {
+    container.innerHTML = '<div style="text-align:center;padding:30px;color:#666;"><i class="fa-solid fa-spinner fa-spin"></i></div>';
+    fetch(api('/queue/list')).then(r => r.json()).then(d => {
         container.innerHTML = '';
-        if (!d.queue.length) {
-            container.innerHTML = '<div style="text-align:center;padding:30px;color:#666;">Queue is empty</div>';
-            return;
-        }
+        if (!d.queue.length) { container.innerHTML = '<div style="text-align:center;padding:30px;color:#666;">Queue is empty</div>'; return; }
         d.queue.forEach((item, i) => {
             const row = document.createElement('div');
             row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;';
             if (i === d.current_index) row.style.background = 'rgba(0,255,0,0.08)';
-            
             const num = document.createElement('span');
             num.style.cssText = 'color:#666;font-size:0.65rem;min-width:20px;font-family:monospace;';
             num.textContent = (i + 1) + '.';
-            
-            const info = document.createElement('div');
-            info.style.cssText = 'flex:1;overflow:hidden;';
-            
+            const info = document.createElement('div'); info.style.cssText = 'flex:1;overflow:hidden;';
             const title = document.createElement('div');
             title.style.cssText = 'font-size:0.7rem;color:' + (i === d.current_index ? 'var(--accent)' : '#eee') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
             title.textContent = item.title;
-            
-            info.appendChild(title);
-            row.appendChild(num);
-            row.appendChild(info);
-            
+            info.appendChild(title); row.appendChild(num); row.appendChild(info);
             row.onclick = () => {
                 togglePlaylistPopup();
-                if (systemState.playMode === 'browser') {
-                    fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
+                if (playMode === 'browser') {
+                    fetch(api('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title)));
                     setTimeout(() => {
-                        fetch('/play/current').then(r => r.json()).then(p => {
+                        fetch(api('/play/current')).then(r => r.json()).then(p => {
                             if(p.link) {
                                 const src = p.link.includes('youtube') || p.link.includes('youtu.be')
-                                    ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
-                                    : '/stream?path=' + encodeURIComponent(p.link);
+                                    ? api('/youtube_proxy?url=' + encodeURIComponent(p.link))
+                                    : api('/stream?path=' + encodeURIComponent(p.link));
                                 playBrowserAudio(src, p.title || item.title);
-                                if(p.thumb) document.getElementById('cover-img').src = p.thumb;
                             }
                         });
                     }, 300);
-                } else {
-                    fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
-                }
+                } else fetch(api('/control/jump?index=' + i)).then(() => showToast('Jump: ' + item.title));
             };
             container.appendChild(row);
         });
-    }).catch(() => {
-        container.innerHTML = '<div style="text-align:center;color:red;">Error loading queue</div>';
     });
 }
 
@@ -734,37 +639,34 @@ function initPlaylistPopup() {
 function updateMiniQueue() {
     const mq = document.getElementById('mini-queue'); const mql = document.getElementById('mini-queue-list');
     if(!mq || !mql) return;
-    fetch('/queue/list').then(r => r.json()).then(d => {
+    fetch(api('/queue/list')).then(r => r.json()).then(d => {
         if(d.queue.length > 1 && d.current_index >= 0) {
             mq.style.display = 'block'; mql.innerHTML = '';
             const start = d.current_index + 1;
-            const maxShow = 2;
-            for(let i = start; i < Math.min(start + maxShow, d.queue.length); i++) {
+            for(let i = start; i < Math.min(start + 2, d.queue.length); i++) {
                 const item = d.queue[i]; const div = document.createElement('div');
                 div.style.cssText = 'font-size:0.6rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;padding:1px 0;';
                 div.textContent = (i + 1) + '. ' + item.title;
                 div.onclick = () => {
-                    if (systemState.playMode === 'browser') {
-                        fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
+                    if (playMode === 'browser') {
+                        fetch(api('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title)));
                         setTimeout(() => {
-                            fetch('/play/current').then(r => r.json()).then(p => {
+                            fetch(api('/play/current')).then(r => r.json()).then(p => {
                                 if(p.link) {
                                     const src = p.link.includes('youtube') || p.link.includes('youtu.be')
-                                        ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
-                                        : '/stream?path=' + encodeURIComponent(p.link);
+                                        ? api('/youtube_proxy?url=' + encodeURIComponent(p.link))
+                                        : api('/stream?path=' + encodeURIComponent(p.link));
                                     playBrowserAudio(src, p.title || item.title);
                                 }
                             });
                         }, 300);
-                    } else {
-                        fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
-                    }
+                    } else fetch(api('/control/jump?index=' + i)).then(() => showToast('Jump: ' + item.title));
                 };
                 mql.appendChild(div);
             }
-            if(start + maxShow < d.queue.length) {
+            if(start + 2 < d.queue.length) {
                 const more = document.createElement('div'); more.style.cssText = 'font-size:0.55rem;color:#555;';
-                more.textContent = '+' + (d.queue.length - start - maxShow) + ' more'; mql.appendChild(more);
+                more.textContent = '+' + (d.queue.length - start - 2) + ' more'; mql.appendChild(more);
             }
         } else { mq.style.display = 'none'; }
     }).catch(() => {});
@@ -774,7 +676,7 @@ function updateMiniQueue() {
 async function loadQueue() {
     const l = document.getElementById('queue-list'); l.innerHTML = '';
     try {
-        const d = await (await fetch('/queue/list')).json();
+        const d = await (await fetch(api('/queue/list'))).json();
         if(!d.queue.length) { l.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">Empty</div>'; return; }
         d.queue.forEach((item, i) => {
             const r = document.createElement('div'); r.className = 'queue-item' + (i === d.current_index ? ' now' : '');
@@ -783,27 +685,25 @@ async function loadQueue() {
             if(i === d.current_index) n.style.color = 'var(--accent)';
             info.appendChild(n); r.appendChild(info);
             r.onclick = () => {
-                if (systemState.playMode === 'browser') {
-                    fetch('/play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title));
+                if (playMode === 'browser') {
+                    fetch(api('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=play_now&title=' + encodeURIComponent(item.title)));
                     setTimeout(() => {
-                        fetch('/play/current').then(r => r.json()).then(p => {
+                        fetch(api('/play/current')).then(r => r.json()).then(p => {
                             if(p.link) {
                                 const src = p.link.includes('youtube') || p.link.includes('youtu.be')
-                                    ? '/youtube_proxy?url=' + encodeURIComponent(p.link)
-                                    : '/stream?path=' + encodeURIComponent(p.link);
+                                    ? api('/youtube_proxy?url=' + encodeURIComponent(p.link))
+                                    : api('/stream?path=' + encodeURIComponent(p.link));
                                 playBrowserAudio(src, p.title || item.title);
                             }
                         });
                     }, 300);
-                } else {
-                    fetch('/control/jump?index=' + i).then(() => showToast('Jump: ' + item.title));
-                }
+                } else fetch(api('/control/jump?index=' + i)).then(() => showToast('Jump: ' + item.title));
             };
             l.appendChild(r);
         });
     } catch(e) {}
 }
-function clearQueue() { fetch('/queue/clear').then(() => { loadQueue(); updateMiniQueue(); }); }
+function clearQueue() { fetch(api('/queue/clear')).then(() => { loadQueue(); updateMiniQueue(); }); }
 
 // ====== PRESETS ======
 function initPresets() {
@@ -813,25 +713,25 @@ function initPresets() {
         const b = document.createElement('button'); b.className = 'preset-btn' + (settings.active_preset === n ? ' active' : ''); b.textContent = n;
         b.onclick = () => {
             settings.active_preset = n;
-            fetch('/control/preset?name=' + n).then(r => r.json()).then(d => { for(let k in d) settings[k] = d[k]; updateUI(); if(systemState.playMode === 'browser' && audioInitialized) updateWebAudioEQ(); tg('pr-om'); showToast('EQ: ' + n); });
+            fetch(api('/control/preset?name=' + n)).then(r => r.json()).then(d => { for(let k in d) settings[k] = d[k]; updateUI(); if(playMode === 'browser' && audioInitialized) updateWebAudioEQ(); tg('pr-om'); showToast('EQ: ' + n); });
         };
         c.appendChild(b);
     });
 }
-function setTimer(m) { fetch('/system/timer?min=' + m).then(() => showToast(m > 0 ? 'Sleep ' + m + 'm' : 'Timer Off')); }
+function setTimer(m) { fetch(api('/system/timer?min=' + m)).then(() => showToast(m > 0 ? 'Sleep ' + m + 'm' : 'Timer Off')); }
 
 // ====== PLAYLIST ======
 async function addPl() {
     const name = document.getElementById('pl-name').value.trim(); const url = document.getElementById('pl-url').value.trim();
     if(!name || !url) return showToast('Name & URL required');
-    const list = await (await fetch('/get_playlist')).json();
+    const list = await (await fetch(api('/get_playlist'))).json();
     list.push({ title: name, link: url, added_at: Date.now() });
-    await fetch('/save_playlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) });
+    await fetch(api('/save_playlist'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) });
     showToast('Saved!'); loadSavedPlaylists();
 }
 function loadSavedPlaylists() {
     const l = document.getElementById('pl-list'); l.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">Loading...</div>';
-    fetch('/get_playlist').then(r => r.json()).then(data => {
+    fetch(api('/get_playlist')).then(r => r.json()).then(data => {
         l.innerHTML = ''; if(!data.length) { l.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">Empty</div>'; return; }
         data.forEach((item, i) => {
             const r = document.createElement('div'); r.className = 'lib-item';
@@ -846,9 +746,9 @@ function loadSavedPlaylists() {
         });
     });
 }
-async function deletePlItem(idx) { const list = await (await fetch('/get_playlist')).json(); list.splice(idx, 1); await fetch('/save_playlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) }); loadSavedPlaylists(); showToast('Deleted'); }
-function exportM3U() { window.location.href = '/playlist/export_m3u'; showToast('Exporting...'); }
-function importM3U(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async(ev) => { const r = await fetch('/playlist/import_m3u', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: ev.target.result }); const d = await r.json(); if(d.status === 'ok') { showToast('Imported ' + d.imported); loadQueue(); } }; reader.readAsText(file); }
+async function deletePlItem(idx) { const list = await (await fetch(api('/get_playlist'))).json(); list.splice(idx, 1); await fetch(api('/save_playlist'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list) }); loadSavedPlaylists(); showToast('Deleted'); }
+function exportM3U() { window.location.href = api('/playlist/export_m3u'); }
+function importM3U(e) { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async(ev) => { const r = await fetch(api('/playlist/import_m3u'), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: ev.target.result }); const d = await r.json(); if(d.status === 'ok') { showToast('Imported ' + d.imported); loadQueue(); } }; reader.readAsText(file); }
 
 // ====== VOLUME INIT ======
 function initVol() {
@@ -857,7 +757,5 @@ function initVol() {
     settings.vol = settings.vol || 50;
     vs.value = settings.vol;
     document.getElementById('vol-val').textContent = settings.vol + '%';
-    if(systemState.playMode === 'browser' && browserAudio) {
-        browserAudio.volume = settings.vol / 100;
-    }
+    if(playMode === 'browser' && browserAudio) browserAudio.volume = settings.vol / 100;
 }
