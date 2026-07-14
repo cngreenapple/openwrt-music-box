@@ -431,7 +431,13 @@ def get_lyrics():
         artist = request.args.get('artist') or st4_state.get("artist", "")
         title = request.args.get('title') or st4_state.get("title", "")
         album = request.args.get('album') or st4_state.get("album", "")
-        duration = int(st4_state.get("total_time", 0))
+        # Duration from frontend (browser mode has accurate duration), fallback to state
+        try:
+            duration = int(request.args.get('duration', 0))
+        except:
+            duration = 0
+        if duration <= 0:
+            duration = int(st4_state.get("total_time", 0))
     
     if not title: return jsonify({"error": "No track info"})
 
@@ -472,16 +478,22 @@ def get_lyrics():
                 if best_match.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": best_match['syncedLyrics']})
                 elif best_match.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": best_match['plainLyrics']})
         
-        # Strategy 3: /api/search with just title (only if no artist)
-        if not artist or artist == "Unknown Artist":
-            app.logger.info(f"LRCLIB /api/search with q='{clean_title}'")
-            resp_q = requests.get("https://lrclib.net/api/search", params={"q": clean_title}, headers=headers, timeout=10)
-            data_q = resp_q.json()
-            if data_q and isinstance(data_q, list) and len(data_q) > 0:
-                best_match = data_q[0]
-                app.logger.info(f"Fallback: {best_match.get('trackName')} by {best_match.get('artistName')}")
+        # Strategy 3: /api/search with just title (fallback - only if no specific artist)
+        # Verify match: check if search result artist matches our artist
+        app.logger.info(f"LRCLIB /api/search with q='{clean_title}' (fallback)")
+        resp_q = requests.get("https://lrclib.net/api/search", params={"track_name": clean_title}, headers=headers, timeout=10)
+        data_q = resp_q.json()
+        if data_q and isinstance(data_q, list) and len(data_q) > 0:
+            best_match = data_q[0]
+            match_artist = best_match.get('artistName', '').lower()
+            our_artist = artist.lower()
+            # Only accept if same artist, or if we have no artist info
+            if not artist or artist == "Unknown Artist" or match_artist == our_artist or our_artist in match_artist or match_artist in our_artist:
+                app.logger.info(f"Fallback accepted: {best_match.get('trackName')} by {best_match.get('artistName')}")
                 if best_match.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": best_match['syncedLyrics']})
                 elif best_match.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": best_match['plainLyrics']})
+            else:
+                app.logger.info(f"Fallback rejected: artist mismatch ({match_artist} vs {our_artist})")
         
         app.logger.warning(f"No lyrics found for '{clean_title}'")
         return jsonify({"error": "Not found"})

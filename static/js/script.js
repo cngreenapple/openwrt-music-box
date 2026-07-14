@@ -424,8 +424,34 @@ function ctl(action) {
     }
     else if(action === 'shuffle') {
         if (playMode === 'browser') {
-            // Browser mode: no shuffle on backend, just toast
-            showToast('Shuffled (browser)');
+            // Browser mode: shuffle queue locally, update backend
+            fetch(api('/queue/list')).then(r => r.json()).then(d => {
+                if (d.queue.length > 1 && d.current_index >= 0) {
+                    const current = d.queue[d.current_index];
+                    const rest = d.queue.filter((_, i) => i !== d.current_index);
+                    // Fisher-Yates shuffle on rest
+                    for (let i = rest.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [rest[i], rest[j]] = [rest[j], rest[i]];
+                    }
+                    const newQueue = [current, ...rest];
+                    // Update backend: clear and re-add
+                    fetch(api('/queue/clear')).then(() => {
+                        let chain = Promise.resolve();
+                        newQueue.forEach(item => {
+                            chain = chain.then(() => 
+                                fetch(api('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=enqueue&title=' + encodeURIComponent(item.title)))
+                            );
+                        });
+                        chain.then(() => {
+                            // Update current_index = 0 since current track is first
+                            fetch(api('/browser_play?url=' + encodeURIComponent(current.link) + '&mode=play_now&title=' + encodeURIComponent(current.title)));
+                            showToast('Shuffled');
+                            setTimeout(() => { loadQueue(); updateMiniQueue(); }, 300);
+                        });
+                    });
+                }
+            });
         } else {
             fetch(api('/control/shuffle')).then(() => showToast('Shuffled'));
         }
