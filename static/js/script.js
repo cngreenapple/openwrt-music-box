@@ -275,10 +275,12 @@ function updatePlayBtn() { const btn = document.getElementById('pi'); if(btn) bt
 // ====== MODE ======
 function updateModeIndicator() {
     const mi = document.getElementById('mode-indicator');
+    const oi = document.getElementById('output-indicator');
     if(!mi) return;
     const isSrv = playMode === 'server';
     mi.innerHTML = isSrv ? '<i class="fa-solid fa-server"></i> Device Mode' : '<i class="fa-solid fa-desktop"></i> Browser Mode';
     mi.style.color = isSrv ? 'var(--accent)' : 'var(--dim)';
+    if (oi) oi.style.display = isSrv ? 'block' : 'none';
 }
 
 function switchPlayMode(mode) {
@@ -294,13 +296,11 @@ function togglePlayMode() {
     const newMode = playMode === 'server' ? 'browser' : 'server';
     const oldMode = playMode;
     
-    // Save queue + current track before switching
-    Promise.all([
-        fetch('/queue/list').then(r => r.json()),
-        fetch('/play/current').then(r => r.json())
-    ]).then(([queueData, cur]) => {
+    // Save queue before switching
+    fetch('/queue/list').then(r => r.json()).then(queueData => {
         const savedQueue = queueData.queue || [];
         const savedIndex = queueData.current_index !== undefined ? queueData.current_index : -1;
+        const currentItem = (savedIndex >= 0 && savedIndex < savedQueue.length) ? savedQueue[savedIndex] : null;
         
         // Stop current mode
         if (oldMode === 'browser') {
@@ -310,37 +310,37 @@ function togglePlayMode() {
         // Switch mode
         switchPlayMode(newMode);
         
-        // Restore queue in new mode
-        if (savedQueue.length > 0 && savedIndex >= 0) {
+        // Restore queue + play from start
+        if (savedQueue.length > 0 && currentItem) {
             setTimeout(() => {
-                // Step 1: Clear and rebuild queue via browser_play (works in both modes)
+                // Clear queue, rebuild ALL items as 'enqueue' (NEVER use play_now which rebuilds queue)
                 fetch('/queue/clear').then(() => {
                     let chain = Promise.resolve();
-                    savedQueue.forEach((item, idx) => {
-                        const m = (idx === savedIndex) ? 'play_now' : 'enqueue';
+                    savedQueue.forEach(item => {
                         chain = chain.then(() => 
-                            fetch('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=' + m + '&title=' + encodeURIComponent(item.title))
+                            fetch('/browser_play?url=' + encodeURIComponent(item.link) + '&mode=enqueue&title=' + encodeURIComponent(item.title))
                         );
                     });
-                    // Step 2: Start playback in the new mode
+                    // Set current_index manually, then start playback
                     chain.then(() => {
-                        if (cur.index >= 0 && cur.link) {
+                        fetch('/queue/list').then(r => r.json()).then(qd => {
+                            // Find the item in the rebuilt queue
+                            const idx = qd.queue.findIndex(i => i.link === currentItem.link || i.title === currentItem.title);
+                            const targetIdx = idx >= 0 ? idx : savedIndex;
+                            
                             if (newMode === 'browser') {
-                                const src = cur.link.includes('youtube') || cur.link.includes('youtu.be')
-                                    ? '/youtube_proxy?url=' + encodeURIComponent(cur.link)
-                                    : '/stream?path=' + encodeURIComponent(cur.link);
-                                playBrowserAudio(src, cur.title);
+                                // Browser: set current track and play
+                                fetch('/browser_play?url=' + encodeURIComponent(currentItem.link) + '&mode=play_now&title=' + encodeURIComponent(currentItem.title));
                             } else {
-                                // Use jump to start mpv (does NOT rebuild queue)
-                                fetch('/control/jump?index=' + savedIndex);
+                                // Server: jump to the track (does NOT rebuild queue)
+                                fetch('/control/jump?index=' + targetIdx);
                             }
-                        }
-                        setTimeout(() => { loadQueue(); updateMiniQueue(); }, 300);
+                            setTimeout(() => { loadQueue(); updateMiniQueue(); }, 300);
+                        });
                     });
                 });
             }, 300);
         } else {
-            // No queue, just switch
             switchPlayMode(newMode);
         }
     }).catch(() => {
