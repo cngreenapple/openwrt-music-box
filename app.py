@@ -437,7 +437,7 @@ def get_lyrics():
 
     clean_title = re.sub(r"\(.*?\)|\[.*?\]|【.*?】", "", title).strip()
     headers = {"User-Agent": "ST4Player/1.0"}
-    logger.info(f"Lyrics request: title='{clean_title}', artist='{artist}', album='{album}', duration={duration}")
+    app.logger.info(f"Lyrics request: title='{clean_title}', artist='{artist}', album='{album}', duration={duration}")
     
     try:
         # Strategy 1: Use /api/get with full track signature (most accurate)
@@ -448,46 +448,46 @@ def get_lyrics():
                 "album_name": album if album else clean_title,
                 "duration": duration
             }
-            logger.info(f"LRCLIB /api/get with params: {params}")
+            app.logger.info(f"LRCLIB /api/get with params: {params}")
             resp = requests.get("https://lrclib.net/api/get", params=params, headers=headers, timeout=10)
-            logger.info(f"LRCLIB /api/get status: {resp.status_code}")
+            app.logger.info(f"LRCLIB /api/get status: {resp.status_code}")
             
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('syncedLyrics'): 
-                    logger.info("Found synced lyrics via /api/get")
+                    app.logger.info("Found synced lyrics via /api/get")
                     return jsonify({"type": "synced", "lyrics": data['syncedLyrics']})
                 elif data.get('plainLyrics'): 
-                    logger.info("Found plain lyrics via /api/get")
+                    app.logger.info("Found plain lyrics via /api/get")
                     return jsonify({"type": "plain", "lyrics": data['plainLyrics']})
         
         # Strategy 2: Use /api/search with track_name + artist_name
         if artist and artist != "Unknown Artist":
             params = {"track_name": clean_title, "artist_name": artist}
-            logger.info(f"LRCLIB /api/search with: {params}")
+            app.logger.info(f"LRCLIB /api/search with: {params}")
             resp_search = requests.get("https://lrclib.net/api/search", params=params, headers=headers, timeout=10)
             data_search = resp_search.json()
             if data_search and isinstance(data_search, list) and len(data_search) > 0:
                 best_match = data_search[0]
-                logger.info(f"Search found: {best_match.get('trackName')} by {best_match.get('artistName')}")
+                app.logger.info(f"Search found: {best_match.get('trackName')} by {best_match.get('artistName')}")
                 if best_match.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": best_match['syncedLyrics']})
                 elif best_match.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": best_match['plainLyrics']})
         
         # Strategy 3: Use /api/search with q (fallback)
-        logger.info(f"LRCLIB /api/search with q='{clean_title}'")
+        app.logger.info(f"LRCLIB /api/search with q='{clean_title}'")
         resp_q = requests.get("https://lrclib.net/api/search", params={"q": clean_title}, headers=headers, timeout=10)
         data_q = resp_q.json()
         if data_q and isinstance(data_q, list) and len(data_q) > 0:
             best_match = data_q[0]
-            logger.info(f"Fallback search found: {best_match.get('trackName')}")
+            app.logger.info(f"Fallback search found: {best_match.get('trackName')}")
             if best_match.get('syncedLyrics'): return jsonify({"type": "synced", "lyrics": best_match['syncedLyrics']})
             elif best_match.get('plainLyrics'): return jsonify({"type": "plain", "lyrics": best_match['plainLyrics']})
         
-        logger.warning(f"No lyrics found for '{clean_title}' by '{artist}'")
+        app.logger.warning(f"No lyrics found for '{clean_title}' by '{artist}'")
         return jsonify({"error": "Not found"})
             
     except Exception as e:
-        logger.error(f"get_lyrics error: {e}")
+        app.logger.error(f"get_lyrics error: {e}")
         return jsonify({"error": str(e)})
 
 @app.route('/bt/scan')
