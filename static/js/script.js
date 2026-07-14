@@ -561,7 +561,7 @@ function fetchLyrics() {
         return;
     }
 
-    fetch('/get_lyrics')
+    fetch('/get_lyrics?duration=' + Math.round(totalDuration || 0))
         .then(r => r.json())
         .then(d => {
             lastLyricsTitle = title;
